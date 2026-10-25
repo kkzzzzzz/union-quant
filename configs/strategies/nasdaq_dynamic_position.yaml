@@ -1,0 +1,111 @@
+strategy_id: "nasdaq_dynamic_position"
+name: "纳指100动态仓位调度策略 (Trial 039)"
+type: "dynamic_engine"
+version: "2.0"
+description: "以纳指100为核心(base=0.52, c1=1.5)的9资产PE分位动态配置 + RSI/LogBias双因子极值触发调仓"
+
+execution:
+  mode: "next_day_close_proxy"
+  initial_capital: 1000000.0
+  commission_rate: 0.0001
+  slippage_rate: 0.0005
+  min_commission: 5.0
+
+rebalance:
+  frequency: "extremum_signal"
+  extremum_trigger:
+    enabled: true
+    monitor_symbols: ["NDX.GI", "SPX.GI", "HSTECH.HI", "000300.SH"]
+    lookback_days: 756
+    rsi_window: 14
+    bias_window: 20
+    quantile_high: 0.90
+    quantile_low: 0.05
+    cooldown_days: 30
+    max_days_without_rebalance: 90
+
+strategy_params:
+  missing_data_policy: "skip"
+  assets:
+    - symbol: "NDX.GI"
+      name: "纳斯达克100"
+      trade_symbol: "513100.SH"
+      role: "equity"
+      priority: 1
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "parabolic"
+      base_weight: 0.52
+      c1: 1.5
+
+    - symbol: "SPX.GI"
+      name: "标普500"
+      trade_symbol: "513500.SH"
+      role: "equity"
+      priority: 2
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "parabolic"
+      base_weight: 0.17
+      c1: 4.0
+
+    - symbol: "HSTECH.HI"
+      name: "恒生科技"
+      trade_symbol: "513180.SH"
+      role: "equity"
+      priority: 3
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "power"
+      base_weight: 0.15
+      c1: 5.0
+
+    - symbol: "000300.SH"
+      name: "沪深300"
+      trade_symbol: "510300.SH"
+      role: "equity"
+      priority: 4
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "power"
+      base_weight: 0.09
+      c1: 5.0
+
+    - symbol: "000905.SH"
+      name: "中证500"
+      trade_symbol: "510500.SH"
+      role: "equity"
+      priority: 5
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "power"
+      base_weight: 0.06
+      c1: 5.0
+
+    - symbol: "000852.SH"
+      name: "中证1000"
+      trade_symbol: "512100.SH"
+      role: "equity"
+      priority: 6
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "power"
+      base_weight: 0.02
+      c1: 5.0
+
+    - symbol: "399269.SZ"
+      name: "红利低波(H30269)"
+      trade_symbol: "512890.SH"
+      role: "equity"
+      priority: 7
+      factor_id: "pe_percentile_10y"
+      weight_strategy: "power"
+      base_weight: 0.10
+      c1: 2.0
+
+    - symbol: "Au99.99.SGE"
+      name: "上海金Au99.99"
+      trade_symbol: "518880.SH"
+      role: "fixed"
+      priority: 8
+      base_weight: 0.10
+
+    - symbol: "CBA02701.CS"
+      name: "中债7-10年政金债财富"
+      trade_symbol: "511090.SH"
+      role: "residual"
+      priority: 9

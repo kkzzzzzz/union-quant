@@ -1,0 +1,378 @@
+# ==============================================================================
+# 统一标的与数据源配置字典 (Unified Asset & Data Source Registry)
+# ==============================================================================
+# 支持资产类别 (asset_type):
+#   - index: 股票指数 (支持新浪实时行情 + 好买估值 PE/PB/股息率 + AkShare 历史K线)
+#   - bond:  债券财富指数 (支持中债登官网接口 + AkShare 兜底)
+#   - gold:  黄金现货/合约 (支持上海金交所 Au99.99)
+#   - etf:   场内 ETF (支持东财前复权日线 + 新浪历史日线兜底)
+#   - macro: 宏观/衍生温度计指标 (如股债利差 SBE 分位数)
+# ==============================================================================
+
+assets:
+  # ----------------------------------------------------------------------------
+  # 1. 全球及A股核心指数 (Indices)
+  # ----------------------------------------------------------------------------
+  NDX.GI:
+    name: "纳斯达克100"
+    asset_type: "index"
+    market: "US"
+    currency: "USD"
+    trade_etf: "513100.SH"
+    sources:
+      sina_code: "gb_ndx"
+      howbuy_zsdm: "ND100"
+      ak_type: "us"
+      ak_symbol: ".NDX"
+    factors:
+      - "pe_percentile_10y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  SPX.GI:
+    name: "标普500"
+    asset_type: "index"
+    market: "US"
+    currency: "USD"
+    trade_etf: "513500.SH"
+    sources:
+      sina_code: "gb_inx"
+      howbuy_zsdm: "SP500"
+      ak_type: "us"
+      ak_symbol: ".INX"
+    factors:
+      - "pe_percentile_10y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  HSTECH.HI:
+    name: "恒生科技"
+    asset_type: "index"
+    market: "HK"
+    currency: "HKD"
+    trade_etf: "513180.SH"
+    sources:
+      sina_code: "rt_hkHSTECH"
+      howbuy_zsdm: "HSTECH"
+      ak_type: "hk"
+      ak_symbol: "HSTECH"
+    factors:
+      - "pe_percentile_5y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  "000300.SH":
+    name: "沪深300"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "510300.SH"
+    sources:
+      sina_code: "sh000300"
+      howbuy_zsdm: "000300"
+      ak_type: "cn"
+      ak_symbol: "sh000300"
+    factors:
+      - "pe_percentile_10y"
+      - "pb_percentile_5y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  "000905.SH":
+    name: "中证500"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "510500.SH"
+    sources:
+      sina_code: "sh000905"
+      howbuy_zsdm: "000905"
+      ak_type: "cn"
+      ak_symbol: "sh000905"
+    factors:
+      - "pe_percentile_10y"
+      - "pb_percentile_5y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  "000852.SH":
+    name: "中证1000"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "512100.SH"
+    sources:
+      sina_code: "sh000852"
+      howbuy_zsdm: "000852"
+      ak_type: "cn"
+      ak_symbol: "sh000852"
+    factors:
+      - "pe_percentile_10y"
+      - "pb_percentile_5y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  "399006.SZ":
+    name: "创业板指"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "159915.SZ"
+    sources:
+      sina_code: "sz399006"
+      howbuy_zsdm: "399006"
+      ak_type: "cn"
+      ak_symbol: "sz399006"
+    factors:
+      - "pe_percentile_10y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  "000510.SH":
+    name: "中证A500"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "159338.SZ"
+    sources:
+      sina_code: "sh000510"
+      howbuy_zsdm: "000510"
+      ak_type: "cn_em"
+      ak_symbol: "sh000510"
+    factors:
+      - "pe_percentile_10y"
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+
+  "000922.CSI":
+    name: "中证红利"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "515080.SH"
+    sources:
+      sina_code: "sh000922"
+      howbuy_zsdm: "000922"
+      ak_type: "cn"
+      ak_symbol: "sh000922"
+    factors:
+      - "pe_percentile_10y"
+      - "dy_percentile_5y"
+      - "ret_20d"
+
+  "399269.SZ":
+    name: "红利低波"
+    asset_type: "index"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "512890.SH"
+    sources:
+      sina_code: "sz399269"
+      howbuy_zsdm: "H30269"
+      ak_type: "cn_em"
+      ak_symbol: "sz399269"
+    factors:
+      - "pe_percentile_5y"
+      - "dy_percentile_5y"
+      - "ret_20d"
+
+  # ----------------------------------------------------------------------------
+  # 2. 债券与黄金指数 (Bonds & Gold)
+  # ----------------------------------------------------------------------------
+  "CBA02701.CS":
+    name: "中债7-10年政金债财富"
+    asset_type: "bond"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "511090.SH"
+    sources:
+      chinabond_id: "2c9081e50e8767dc010e879387370009"
+      ak_bond_name: "中债-7-10年政策性金融债指数"
+      ak_bond_indicator: "财富指数"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "CBA06501.CS":
+    name: "中债3-5年国债财富"
+    asset_type: "bond"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "511010.SH"
+    sources:
+      chinabond_id: "8a8b2ca0332abed20134ea76d8885831"
+      ak_bond_name: "中债-国债总财富(3-5年)指数"
+      ak_bond_indicator: "财富指数"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "Au99.99.SGE":
+    name: "上海金Au99.99"
+    asset_type: "gold"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "518880.SH"
+    sources:
+      sge_symbol: "Au99.99"
+    factors:
+      - "rsi_14"
+      - "log_bias"
+      - "ret_20d"
+      - "vol_30d"
+
+  # ----------------------------------------------------------------------------
+  # 3. 场内 ETF 标的 (ETFs - 用于动量轮动/大小盘轮动)
+  # ----------------------------------------------------------------------------
+  "510300.SH":
+    name: "沪深300ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "510300.SH"
+    sources:
+      etf_code: "510300"
+      sina_etf_code: "sh510300"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "159915.SZ":
+    name: "创业板ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "159915.SZ"
+    sources:
+      etf_code: "159915"
+      sina_etf_code: "sz159915"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "513100.SH":
+    name: "纳指ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "513100.SH"
+    sources:
+      etf_code: "513100"
+      sina_etf_code: "sh513100"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "518880.SH":
+    name: "黄金ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "518880.SH"
+    sources:
+      etf_code: "518880"
+      sina_etf_code: "sh518880"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "511090.SH":
+    name: "30年国债ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "511090.SH"
+    sources:
+      etf_code: "511090"
+      sina_etf_code: "sh511090"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "511010.SH":
+    name: "国债ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "511010.SH"
+    sources:
+      etf_code: "511010"
+      sina_etf_code: "sh511010"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "512890.SH":
+    name: "红利低波ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "512890.SH"
+    sources:
+      etf_code: "512890"
+      sina_etf_code: "sh512890"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "513500.SH":
+    name: "标普500ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "513500.SH"
+    sources:
+      etf_code: "513500"
+      sina_etf_code: "sh513500"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  "512100.SH":
+    name: "中证1000ETF"
+    asset_type: "etf"
+    market: "CN"
+    currency: "CNY"
+    trade_etf: "512100.SH"
+    sources:
+      etf_code: "512100"
+      sina_etf_code: "sh512100"
+    factors:
+      - "ret_20d"
+      - "vol_30d"
+
+  # ----------------------------------------------------------------------------
+  # 4. 宏观与股债利差温度计指标 (Macro / SBE)
+  # ----------------------------------------------------------------------------
+  "SBE.JCS":
+    name: "中证800股债性价比(韭圈儿分位)"
+    asset_type: "macro"
+    market: "CN"
+    currency: "PCT"
+    sources:
+      sbe_source: "jiucaishuo"
+    factors: []
+
+  "SBE.DJ":
+    name: "股债利差分位(蛋卷分位)"
+    asset_type: "macro"
+    market: "CN"
+    currency: "PCT"
+    sources:
+      sbe_source: "danjuan"
+    factors: []

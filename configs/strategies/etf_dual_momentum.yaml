@@ -1,0 +1,34 @@
+strategy_id: "etf_dual_momentum"
+name: "ETF双动量轮动策略"
+type: "etf_weekly_momentum"
+version: "2.0"
+description: "黄金、纳指100、创业板、红利低波4大ETF双周周五检验20日相对动量与60日均线绝对趋势过滤，全部跌破60日线时持现避险"
+
+execution:
+  mode: "next_day_close_proxy"
+  signal_cutoff: "same_day_close"
+  initial_capital: 1000000.0
+  commission_rate: 0.0001
+  slippage_rate: 0.0005
+  min_commission: 1.0
+
+rebalance:
+  frequency: "weekly"
+  weekday: 4
+  interval_weeks: 2
+
+strategy_params:
+  momentum_window: 20
+  ma_window: 60
+  enable_ma_filter: true
+  top_k: 1
+  fallback_mode: "cash"
+  assets:
+    - symbol: "518880.SH"
+      name: "黄金ETF华安"
+    - symbol: "513100.SH"
+      name: "纳指ETF国泰"
+    - symbol: "159915.SZ"
+      name: "创业板ETF易方达"
+    - symbol: "512890.SH"
+      name: "红利低波ETF华泰柏瑞"

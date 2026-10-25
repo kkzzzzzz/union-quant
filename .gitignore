@@ -1,0 +1,29 @@
+# 环境变量与密钥（严禁提交）
+.env
+*.env
+*.env.local
+!.env.example
+
+# 本地数据库与运行缓存
+data/*.db
+data/*.db-journal
+data/cache/
+outputs/
+site/
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 浏览器 Profile 与前端依赖
+.chrome_profile*/
+**/node_modules/
+**/.next/
+
+# 历史子工程（保持独立，不嵌套提交）
+index_fetcher/
+now_asset/
+strategy/

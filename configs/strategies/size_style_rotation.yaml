@@ -1,0 +1,30 @@
+strategy_id: "size_style_rotation"
+name: "大小盘风格阈值动量轮动策略"
+type: "rotation"
+version: "2.0"
+description: "沪深300与中证1000/创业板20日动量阈值轮动，双负动量转入国债避险"
+
+execution:
+  mode: "next_day_close_proxy"
+  initial_capital: 1000000.0
+  commission_rate: 0.0003
+  slippage_rate: 0.0003
+  min_commission: 1.0
+
+rebalance:
+  frequency: "weekly"
+  weekday: 4
+  interval_weeks: 1
+
+strategy_params:
+  lookback_days: 20
+  buy_threshold: 0.0
+  sell_threshold: -0.01
+  safe_asset: "511010.SH"
+  assets:
+    - symbol: "510300.SH"
+      name: "沪深300ETF"
+    - symbol: "512100.SH"
+      name: "中证1000ETF"
+    - symbol: "159915.SZ"
+      name: "创业板ETF"

@@ -1,0 +1,25 @@
+strategy_id: "sbe_notice"
+name: "股债性价比(SBE)动态股债配置策略"
+type: "sbe_notice"
+version: "2.0"
+description: "基于中证800股债性价比(FED模型历史分位数)计算最优股票与债券配置比例"
+
+execution:
+  mode: "next_day_close_proxy"
+  initial_capital: 1000000.0
+  commission_rate: 0.0005
+  slippage_rate: 0.0005
+  min_commission: 5.0
+
+rebalance:
+  frequency: "month"
+
+strategy_params:
+  sbe_symbol: "SBE.JCS"
+  sbe_source: "jiucaishuo"
+  equity_symbol: "000300.SH"
+  equity_name: "权益仓位(中证800/沪深300)"
+  bond_symbol: "CBA02701.CS"
+  bond_name: "债券仓位(7-10年政金债)"
+  min_equity_weight: 0.10
+  max_equity_weight: 0.90
