@@ -50,9 +50,27 @@ def _parse_symbols(raw: Optional[str]) -> Optional[List[str]]:
 
 def cmd_list(args: argparse.Namespace) -> int:
     cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
     assets = cfg.load_assets()
     strategies = cfg.list_strategies()
     factors = FactorService.list_registered_factors()
+
+    # 自动同步策略元数据到 strategy_meta
+    meta_rows = []
+    for sid in strategies:
+        scfg = cfg.load_strategy_config(sid)
+        meta_rows.append({
+            "strategy_id": sid,
+            "name": scfg.get("name", sid),
+            "category": scfg.get("type", "dynamic_allocation"),
+            "status": "online",
+            "version": str(scfg.get("version", "2.0")),
+            "universe": [a["symbol"] for a in scfg.get("strategy_params", {}).get("assets", [])] or scfg.get("rebalance", {}).get("extremum_trigger", {}).get("monitor_symbols", []),
+            "default_params": scfg.get("strategy_params") or {},
+            "execution_config": scfg.get("execution") or {},
+            "description": scfg.get("description", ""),
+        })
+    db.upsert_strategy_meta(meta_rows)
 
     print("=" * 72)
     print(f"1. 已配置资产字典 ({len(assets)} 个):")
@@ -70,7 +88,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     print("   " + ", ".join(sorted(STRATEGY_REGISTRY.keys())))
 
     print("\n" + "=" * 72)
-    print(f"4. 可用策略配置文件 ({len(strategies)} 个):")
+    print(f"4. 策略元数据 (已同步到 strategy_meta 表, {len(strategies)} 个):")
     for sid in strategies:
         scfg = cfg.load_strategy_config(sid)
         print(
@@ -315,9 +333,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sig.add_argument(
         "--mode",
-        choices=["live", "dry-run"],
+        choices=["live", "dry-run", "prod", "sandbox", "backtest"],
         default="live",
-        help="live=写入 strategy_signals 表, dry-run=仅本地演练",
+        help="运行模式: live/prod=写入生产信号, dry-run/sandbox=仅沙箱验算, backtest=线下回测",
     )
     p_sig.add_argument("--no-notify", action="store_true", help="禁用消息推送")
     p_sig.set_defaults(func=cmd_signal)

@@ -141,38 +141,6 @@ class QuantPipeline:
                 out_dir / "rebalance_log.csv", index=False
             )
 
-        # 写入策略实验室回测实验记录表 (strategy_backtest_runs)
-        try:
-            exec_cfg = strategy_cfg.get("execution") or {}
-            reb_cfg = strategy_cfg.get("rebalance") or {}
-            run_id = f"{strategy_id}__{start_date or 'init'}_{end_date or 'latest'}"
-            latest_details = (
-                result.latest_decision.asset_details
-                if result.latest_decision
-                else []
-            )
-            self.db.upsert_strategy_backtest_run(
-                {
-                    "run_id": run_id,
-                    "strategy_id": strategy_id,
-                    "strategy_name": strategy.name,
-                    "run_mode": "lab" if not save_outputs else "verified",
-                    "status": "verified",
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "trading_days": result.metrics.get("trading_days", 0),
-                    "rebalance_frequency": reb_cfg.get("frequency", "quarter"),
-                    "commission_rate": float(exec_cfg.get("commission_rate", 0.0005)),
-                    "slippage_rate": float(exec_cfg.get("slippage_rate", 0.0005)),
-                    "config_snapshot": strategy_cfg,
-                    "metrics": result.metrics,
-                    "latest_details": latest_details,
-                    "rebalance_log": result.rebalance_log[-50:],
-                }
-            )
-        except Exception as exc:
-            logger.warning("记录策略实验室回测结果异常: %s", exc)
-
         return result
 
     # ------------------------------------------------------------------
@@ -237,6 +205,53 @@ class QuantPipeline:
             "metrics_snapshot": bt_result.metrics,
             "config_snapshot": strategy_cfg,
         }
+
+        # 映射环境标识 (live -> prod, dry-run -> sandbox, backtest -> backtest)
+        std_mode = "prod" if run_mode in ("live", "prod") else ("sandbox" if run_mode in ("dry-run", "sandbox") else "backtest")
+
+        # 构造白盒计算验算步骤 (process_steps)
+        action = "REBALANCE" if is_rebalance_day else "HOLD"
+        process_steps = [
+            {
+                "step": 1,
+                "name": "data_truncation_check",
+                "desc": f"严格执行 T+1 截断准则，历史数据物理截断到 {cutoff_date}",
+                "cutoff_date": cutoff_date,
+                "signal_date": decision.signal_date,
+            },
+            {
+                "step": 2,
+                "name": "factor_and_trigger_eval",
+                "desc": f"判定是否触碰调仓条件: {'触发调仓' if is_rebalance_day else '维持现状'}",
+                "is_rebalance_day": is_rebalance_day,
+                "trigger_reason": trigger_reason,
+            },
+            {
+                "step": 3,
+                "name": "target_allocation_and_diagnostics",
+                "desc": f"生成目标持仓与资产诊断打分 (资产数: {len(decision.asset_details)})",
+                "cash_weight": cash_weight,
+                "active_holdings": {k: round(v, 6) for k, v in decision.weights.items() if v > 0.0001},
+            },
+        ]
+
+        exec_record: Dict[str, Any] = {
+            "strategy_id": strategy_cfg["strategy_id"],
+            "run_mode": std_mode,
+            "signal_date": decision.signal_date,
+            "execution_date": (run_date or datetime.now().strftime("%Y-%m-%d"))[:10],
+            "is_rebalance_day": is_rebalance_day,
+            "action": action,
+            "cash_weight": cash_weight,
+            "target_weights": decision.weights,
+            "runtime_params": strategy_cfg.get("strategy_params") or {},
+            "asset_diagnostics": decision.asset_details,
+            "process_steps": process_steps,
+            "trigger_reason": trigger_reason,
+        }
+
+        # 写入方案 B：策略执行与验算表 (strategy_executions)
+        self.db.record_strategy_execution(exec_record)
 
         if run_mode == "live":
             self.db.upsert_strategy_signal(payload)

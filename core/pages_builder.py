@@ -140,9 +140,6 @@ def build_static_pages(
         "asset_meta": DatabaseGateway._clean_records_for_json(
             overview["asset_meta"]
         ),
-        "strategy_meta": DatabaseGateway._clean_records_for_json(
-            overview.get("strategy_meta") or []
-        ),
         "market_summary": DatabaseGateway._clean_records_for_json(
             overview["market_summary"]
         ),
@@ -255,8 +252,7 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
                       <th class="py-2 px-2.5 text-right">最新收盘价</th>
                       <th class="py-2 px-2.5 text-right">PE / 均线</th>
                       <th class="py-2 px-2.5">核心因子 / 动量指标</th>
-                      <th class="py-2 px-2.5 w-40">目标配置权重</th>
-                      <th class="py-2 px-2.5">计算推导与过程核验</th>
+                      <th class="py-2 px-2.5 w-44">目标配置权重</th>
                     </tr>
                   </thead>
                   <tbody id="st-asset-details-body" class="divide-y divide-slate-800"></tbody>
@@ -501,13 +497,12 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
           <td class="py-2 px-2.5">${factorDesc}</td>
           <td class="py-2 px-2.5">
             <div class="flex items-center gap-2">
-              <div class="w-20 bg-slate-800 h-2 rounded-full overflow-hidden">
+              <div class="w-24 bg-slate-800 h-2 rounded-full overflow-hidden">
                 <div class="bg-blue-500 h-full" style="width: ${Math.min(100, Math.max(0, wPct))}%"></div>
               </div>
               <span class="font-mono font-bold text-white">${wPct}%</span>
             </div>
           </td>
-          <td class="py-2 px-2.5 text-slate-300 font-mono text-[11px] leading-relaxed max-w-xs break-words">${item.calculation_process || '-'}</td>
         `;
         tbody.appendChild(tr);
       });
