@@ -1,0 +1,14 @@
+data/
+outputs/
+index_fetcher/
+now_asset/
+strategy/
+core/
+configs/
+sql/
+tests/
+*.py
+*.md
+.env*
+__pycache__/
+.git/

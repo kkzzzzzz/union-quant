@@ -9,7 +9,7 @@ data/*.db
 data/*.db-journal
 data/cache/
 outputs/
-site/
+.vercel/
 
 # Python 缓存与虚拟环境
 __pycache__/
