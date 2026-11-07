@@ -81,7 +81,7 @@ def build_static_pages(
         for fid in spec.factors:
             s = gateway.fetch_factor_series(sym, fid)
             if not s.empty:
-                s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"])).ffill()
+                s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"]))
                 factors_data[fid] = [
                     None if pd.isna(v) else round(float(v), 3)
                     for v in s_aligned.values
@@ -417,7 +417,7 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
       (bundle.asset_meta || []).forEach(a => {
         const mktInfo = (bundle.markets || {})[a.symbol] || {};
         const pePctArr = ((mktInfo.factors || {}).pe_percentile_10y) || [];
-        const latestPePct = pePctArr.length > 0 ? pePctArr[pePctArr.length - 1] : null;
+        const latestPePct = [...pePctArr].reverse().find(v => v != null);
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-800/60 cursor-pointer';
         tr.onclick = () => {
@@ -581,7 +581,7 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
     function renderMarketSymbol(symbol) {
       const data = bundle.markets[symbol];
       if (!data) return;
-      const latestRow = (data.recent_rows || [])[0] || {};
+      const latestRow = (data.recent_rows || []).find(r => r.pe != null) || (data.recent_rows || [])[0] || {};
       const peStr = latestRow.pe != null ? Number(latestRow.pe).toFixed(2) : '-';
       const pePctStr = latestRow.pe_percentile_10y != null ? Number(latestRow.pe_percentile_10y).toFixed(2) + '%' : '-';
       document.getElementById('mkt-badge').textContent =

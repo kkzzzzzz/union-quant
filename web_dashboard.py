@@ -64,7 +64,7 @@ def api_market_detail(
     for fid in factor_ids:
         s = db.fetch_factor_series(symbol, fid)
         if not s.empty:
-            s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"])).ffill()
+            s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"]))
             factors_data[fid] = [
                 None if pd.isna(v) else round(float(v), 3) for v in s_aligned.values
             ]
@@ -728,7 +728,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       if (!symbol) return;
       const resp = await fetch('/api/market/' + encodeURIComponent(symbol));
       const data = await resp.json();
-      const latestRow = (data.recent_rows || [])[0] || {};
+      const latestRow = (data.recent_rows || []).find(r => r.pe != null) || (data.recent_rows || [])[0] || {};
       const peStr = latestRow.pe != null ? Number(latestRow.pe).toFixed(2) : '-';
       const pePctStr = latestRow.pe_percentile_10y != null ? Number(latestRow.pe_percentile_10y).toFixed(2) + '%' : '-';
 

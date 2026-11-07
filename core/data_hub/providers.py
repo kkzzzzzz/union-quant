@@ -72,13 +72,25 @@ class SinaQuoteProvider:
 
     @staticmethod
     def _parse_us(symbol: str, parts: List[str]) -> Optional[MarketBar]:
-        # gb_ndx: 0:名称, 1:现价, 2:涨跌幅%, 3:日期时间(YYYY-MM-DD HH:MM:SS), ..., 5:今开, 6:最高, 7:最低, ..., 10:成交量
+        # gb_ndx: 0:名称, 1:现价, 2:涨跌幅%, 3:北京时间, ..., 5:今开, 6:最高, 7:最低, ..., 10:成交量, ..., 25:美东月日时间, ..., 29:年份
         if len(parts) < 8:
             return None
         close = _safe_float(parts[1])
         if not close or close <= 0:
             return None
-        dt_str = parts[3].split(" ")[0] if len(parts) > 3 and parts[3] else ""
+        dt_str = ""
+        if len(parts) >= 30 and parts[25] and parts[29]:
+            months = {
+                "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
+                "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
+                "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+            }
+            m = re.match(r"([A-Za-z]+)\s+(\d+)", parts[25].strip())
+            if m:
+                mon_abbr, day_s = m.groups()
+                dt_str = f"{parts[29].strip()}-{months.get(mon_abbr, '01')}-{day_s.zfill(2)}"
+        if not dt_str:
+            dt_str = parts[3].split(" ")[0] if len(parts) > 3 and parts[3] else ""
         if not dt_str:
             dt_str = datetime.now().strftime("%Y-%m-%d")
         return MarketBar(
