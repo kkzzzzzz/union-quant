@@ -38,31 +38,32 @@ def register_factor(factor_id: str) -> Callable[[FactorFunc], FactorFunc]:
 # 核心向量化算子与内置因子定义
 # ==============================================================================
 def _rolling_percentile(
-    series: pd.Series, window: int, min_periods: int = 60
+    series: pd.Series, window: int, min_periods: int = 50
 ) -> pd.Series:
     """
-    计算滚动历史分位数 (0.0 ~ 100.0)。
-    定义为窗口内小于等于当前值的有效样本比例 * 100。
+    严格对齐原 `index_fetcher/services/factor_engine.py` (`compute_rolling_percentile_factor`)：
+    1. 按行情表行位置切片窗口 `series.iloc[max(0, pos - window + 1) : pos + 1]`（不在切片前全局 dropna）
+    2. 窗口内剔除空值 `non_null = window_data.dropna()`
+    3. 百分位公式为严格小于当前值的比例：`(non_null < cur_val).mean() * 100`
     """
     s = pd.to_numeric(series, errors="coerce")
-    valid = s.dropna()
-    if valid.empty:
-        return pd.Series(index=series.index, dtype=float)
+    arr = s.to_numpy(dtype=float)
+    n_total = len(arr)
+    eff_min = min(50, max(10, window // 2))
+    out = np.full(n_total, np.nan, dtype=float)
 
-    eff_min = min(min_periods, max(10, len(valid) // 2))
+    for i in range(n_total):
+        cur = arr[i]
+        if np.isnan(cur):
+            continue
+        start_pos = max(0, i - window + 1)
+        win = arr[start_pos : i + 1]
+        clean = win[~np.isnan(win)]
+        if len(clean) < eff_min:
+            continue
+        out[i] = float(np.mean(clean < cur) * 100.0)
 
-    def _pct_rank(arr: np.ndarray) -> float:
-        clean = arr[~np.isnan(arr)]
-        n = len(clean)
-        if n < eff_min:
-            return np.nan
-        cur = clean[-1]
-        return float(np.sum(clean <= cur) / n * 100.0)
-
-    out = valid.rolling(window=window, min_periods=eff_min).apply(
-        _pct_rank, raw=True
-    )
-    return out.reindex(series.index).ffill()
+    return pd.Series(out, index=series.index, dtype=float)
 
 
 @register_factor("pe_percentile_10y")

@@ -253,6 +253,30 @@ def bootstrap_verification_data(
     by_sym_date = _load_origin_json_archives()
     _load_strategy_cache_csvs(by_sym_date)
 
+    # 2.1 导入 index_fetcher 审计对齐过的 NDX.GI 完整数据库导出序列 (2011-04-01 ~ 2026-07-16, 3972 行)
+    db_pe_ndx_path = ROOT_DIR / "index_fetcher" / "output" / "db_pe_ndx.csv"
+    if db_pe_ndx_path.exists():
+        try:
+            df_db_ndx = pd.read_csv(db_pe_ndx_path)
+            ndx_bucket = by_sym_date.setdefault("NDX.GI", {})
+            for _, r in df_db_ndx.iterrows():
+                dt_str = str(r.get("date", ""))[:10]
+                if not dt_str:
+                    continue
+                row = ndx_bucket.setdefault(
+                    dt_str, {"symbol": "NDX.GI", "trade_date": dt_str}
+                )
+                if pd.notna(r.get("db_close")):
+                    c = float(r["db_close"])
+                    row["close"] = c
+                    row.setdefault("open", c)
+                    row.setdefault("high", c)
+                    row.setdefault("low", c)
+                if pd.notna(r.get("db_pe")):
+                    row["pe"] = float(r["db_pe"])
+        except Exception as exc:
+            logger.debug("加载 db_pe_ndx.csv 跳过: %s", exc)
+
     # 3. 叠加实时新浪行情与好买估值曲线
     live_fetched: List[str] = []
     if try_live_fetch:
@@ -261,17 +285,25 @@ def bootstrap_verification_data(
             got_live = False
             try:
                 if src.get("howbuy_zsdm"):
+                    existing_dates = set(by_sym_date.get(sym, {}).keys())
+                    max_existing_dt = max(existing_dates) if existing_dates else ""
                     for vb in sync_svc.howbuy.fetch_history_valuation(
-                        sym, src["howbuy_zsdm"], cycle="10y"
+                        sym, src["howbuy_zsdm"], cycle="10N"
                     ):
                         rec = vb.to_record()
                         dt_str = rec["trade_date"]
+                        # 对历史区间仅在已有交易日上对齐补充估值，不改变原交易日历；对最新增量日期补充完整记录
+                        if existing_dates and dt_str <= max_existing_dt and dt_str not in existing_dates:
+                            continue
                         row = by_sym_date.setdefault(sym, {}).setdefault(
                             dt_str, {"symbol": sym, "trade_date": dt_str}
                         )
                         for k, v in rec.items():
-                            if v is not None:
-                                row[k] = v
+                            if v is None:
+                                continue
+                            if k in ("open", "high", "low", "close") and row.get("close") is not None:
+                                continue
+                            row[k] = v
                     got_live = True
                 if src.get("sina_code"):
                     bar = sync_svc.sina.fetch_realtime_bar(sym, src["sina_code"])
@@ -282,8 +314,11 @@ def bootstrap_verification_data(
                             dt_str, {"symbol": sym, "trade_date": dt_str}
                         )
                         for k, v in rec.items():
-                            if v is not None:
-                                row[k] = v
+                            if v is None:
+                                continue
+                            if k in ("open", "high", "low", "close") and row.get("close") is not None:
+                                continue
+                            row[k] = v
                         got_live = True
                 if got_live:
                     live_fetched.append(sym)
@@ -360,12 +395,12 @@ def bootstrap_verification_data(
             ):
                 row["dividend_yield"] = float(r["dividend_yield"])
 
-    # 6. 批量写入 `market_daily` (从 2014-01-01 起保留以充足计算 10 年滚动分位)
+    # 6. 批量写入 `market_daily` (从 2011-01-01 起保留完整 2430 交易日窗口以精确对齐 10 年滚动分位)
     for sym, date_map in by_sym_date.items():
         rows = [
             r
             for dt, r in sorted(date_map.items())
-            if dt >= "2014-01-01" and r.get("close") is not None
+            if dt >= "2011-01-01" and r.get("close") is not None
         ]
         if not rows:
             continue
