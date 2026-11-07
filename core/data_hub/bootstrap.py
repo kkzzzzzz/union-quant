@@ -303,6 +303,8 @@ def bootstrap_verification_data(
                                 continue
                             if k in ("open", "high", "low", "close") and row.get("close") is not None:
                                 continue
+                            if k == "pe" and sym == "NDX.GI" and dt_str <= "2026-07-16" and "pe" in row:
+                                continue
                             row[k] = v
                     got_live = True
                 if src.get("sina_code"):
@@ -317,6 +319,8 @@ def bootstrap_verification_data(
                             if v is None:
                                 continue
                             if k in ("open", "high", "low", "close") and row.get("close") is not None:
+                                continue
+                            if k == "pe" and sym == "NDX.GI" and dt_str <= "2026-07-16" and "pe" in row:
                                 continue
                             row[k] = v
                         got_live = True
