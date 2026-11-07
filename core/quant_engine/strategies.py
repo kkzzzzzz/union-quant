@@ -156,11 +156,12 @@ class DynamicAllocationStrategy(BaseStrategy):
         details: List[Dict[str, Any]] = []
         remaining = 1.0
 
-        for item in assets_cfg:
+        for idx, item in enumerate(assets_cfg, start=1):
             sym = str(item["symbol"])
             name = item.get("name", sym)
             trade_sym = item.get("trade_symbol", sym)
             role = (item.get("role") or item.get("type") or "equity").lower()
+            priority = int(item.get("priority", idx))
             factor_id = item.get("factor_id")
             w_strat = item.get("weight_strategy") or item.get("curve_type") or "linear"
             base_w = float(
@@ -180,47 +181,88 @@ class DynamicAllocationStrategy(BaseStrategy):
             )
 
             factor_val: Optional[float] = None
+            factor_date: Optional[str] = None
             if factor_id:
                 f_series = factors_map.get((sym, factor_id))
                 if f_series is not None and not f_series.empty:
                     sub = f_series[f_series.index <= dt]
                     if not sub.empty:
                         factor_val = float(sub.iloc[-1])
+                        factor_date = sub.index[-1].strftime("%Y-%m-%d")
+
+            remaining_before = round(max(0.0, remaining), 6)
+            p_norm = (
+                round(float(np.clip(factor_val / 100.0, 0.0, 1.0)), 6)
+                if factor_val is not None and not pd.isna(factor_val)
+                else None
+            )
+            w_params = {
+                "priority": priority,
+                "role": role,
+                "weight_strategy": w_strat if role == "equity" else role,
+                "base_weight": base_w,
+                "c1": float(c1_val) if c1_val is not None else None,
+            }
 
             if remaining <= 0.0:
                 weights[sym] = 0.0
+                calc_proc = (
+                    f"[优先级#{priority}] 前序资产已占满 100% 仓位 (剩余可用=0.00%) -> 最终权重=0.00%"
+                )
                 details.append(
                     {
+                        "display_order": priority,
                         "symbol": sym,
                         "name": name,
                         "trade_symbol": trade_sym,
                         "role": role,
                         "base_weight": base_w,
-                        "weight_strategy": w_strat,
+                        "weight_strategy": w_strat if role == "equity" else role,
                         "c1": c1_val,
+                        "weight_strategy_params": w_params,
+                        "target_weight": 0.0,
+                        "remaining_before": 0.0,
                         "weight": 0.0,
+                        "actual_weight": 0.0,
                         "data_date": asset_data_date,
+                        "factor_date": factor_date or asset_data_date,
+                        "valuation_date": asset_data_date,
                         "close": latest_price,
                         "pe": latest_pe,
+                        "valuation_type": "pe_ratio" if latest_pe is not None else "price",
+                        "valuation_value": latest_pe if latest_pe is not None else latest_price,
                         "factor_id": factor_id,
                         "factor_value": round(factor_val, 2)
                         if factor_val is not None
                         else None,
+                        "factor_value_raw": round(factor_val, 4)
+                        if factor_val is not None
+                        else None,
+                        "factor_value_normalized": p_norm,
+                        "calculation_process": calc_proc,
                     }
                 )
                 continue
 
             if role == "residual":
                 raw_w = max(0.0, remaining)
+                formula_desc = (
+                    f"[优先级#{priority} 兜底(residual)] w = max(0, 100% - 前序已分配 {(1.0 - remaining_before)*100:.2f}%) = {raw_w*100:.2f}%"
+                )
             elif role == "fixed":
                 raw_w = base_w
+                formula_desc = (
+                    f"[优先级#{priority} 固定(fixed)] 设定固定权重 base={base_w*100:.2f}%"
+                )
             else:
                 # 若当期该资产尚未上市或无因子数据，按 missing_data_policy 处理
                 if latest_price is None or factor_val is None:
                     if missing_policy == "keep_previous" and current_weights:
                         raw_w = float(current_weights.get(sym, 0.0))
+                        formula_desc = f"[优先级#{priority}] 当期数据缺失，按 keep_previous 沿用上期权重 {raw_w*100:.2f}%"
                     else:
                         raw_w = 0.0
+                        formula_desc = f"[优先级#{priority}] 当期价格或因子数据缺失，按 skip 策略跳过 -> 0.00%"
                 else:
                     raw_w = self._eval_curve(
                         pct_0_to_100=factor_val,
@@ -230,13 +272,45 @@ class DynamicAllocationStrategy(BaseStrategy):
                         min_w=item.get("min_weight"),
                         max_w=item.get("max_weight"),
                     )
+                    stype_low = (w_strat or "linear").lower()
+                    p_val = p_norm or 0.0
+                    if stype_low == "parabolic":
+                        coef = float(c1_val if c1_val is not None else 2.0)
+                        mult = max(0.0, 1.0 - (p_val ** coef))
+                        formula_desc = (
+                            f"[优先级#{priority} parabolic] w = base×(1 - p^c1) = {base_w:.2f}×(1 - {p_val:.4f}^{coef:g}) "
+                            f"= {base_w:.2f}×{mult:.4f} = {raw_w*100:.2f}%"
+                        )
+                    elif stype_low == "power":
+                        coef = float(c1_val if c1_val is not None else 1.5)
+                        mult = (1.0 - p_val) ** coef
+                        formula_desc = (
+                            f"[优先级#{priority} power] w = base×(1 - p)^c1 = {base_w:.2f}×(1 - {p_val:.4f})^{coef:g} "
+                            f"= {base_w:.2f}×{mult:.4f} = {raw_w*100:.2f}%"
+                        )
+                    else:
+                        coef = float(c1_val if c1_val is not None else 1.0)
+                        mult = max(0.0, 1.0 - coef * p_val)
+                        formula_desc = (
+                            f"[优先级#{priority} linear] w = base×(1 - c1×p) = {base_w:.2f}×(1 - {coef:g}×{p_val:.4f}) "
+                            f"= {base_w:.2f}×{mult:.4f} = {raw_w*100:.2f}%"
+                        )
 
             alloc_w = round(min(max(0.0, raw_w), max(0.0, remaining)), 6)
+            if role != "residual":
+                if alloc_w < raw_w - 1e-6:
+                    calc_proc = f"{formula_desc} | 分配前剩余={remaining_before*100:.2f}%，截断后最终权重={alloc_w*100:.2f}%"
+                else:
+                    calc_proc = f"{formula_desc} | 分配前剩余={remaining_before*100:.2f}%充足 -> 最终权重={alloc_w*100:.2f}%"
+            else:
+                calc_proc = f"{formula_desc} -> 最终权重={alloc_w*100:.2f}%"
+
             remaining = max(0.0, round(remaining - alloc_w, 6))
             weights[sym] = alloc_w
 
             details.append(
                 {
+                    "display_order": priority,
                     "symbol": sym,
                     "name": name,
                     "trade_symbol": trade_sym,
@@ -244,15 +318,27 @@ class DynamicAllocationStrategy(BaseStrategy):
                     "base_weight": base_w,
                     "weight_strategy": w_strat if role == "equity" else role,
                     "c1": c1_val,
+                    "weight_strategy_params": w_params,
                     "target_weight": round(raw_w, 6),
+                    "remaining_before": remaining_before,
                     "weight": alloc_w,
+                    "actual_weight": alloc_w,
                     "data_date": asset_data_date,
+                    "factor_date": factor_date or asset_data_date,
+                    "valuation_date": asset_data_date,
                     "close": latest_price,
                     "pe": latest_pe,
+                    "valuation_type": "pe_ratio" if latest_pe is not None else "price",
+                    "valuation_value": latest_pe if latest_pe is not None else latest_price,
                     "factor_id": factor_id,
                     "factor_value": round(factor_val, 2)
                     if factor_val is not None
                     else None,
+                    "factor_value_raw": round(factor_val, 4)
+                    if factor_val is not None
+                    else None,
+                    "factor_value_normalized": p_norm,
+                    "calculation_process": calc_proc,
                 }
             )
 
@@ -347,6 +433,8 @@ class DualMomentumStrategy(BaseStrategy):
 
             cur_price = float(s.iloc[-1])
             past_price = float(s.iloc[-1 - mom_win])
+            past_date = s.index[-1 - mom_win].strftime("%Y-%m-%d")
+            cur_date = s.index[-1].strftime("%Y-%m-%d")
             mom_ret = (
                 (cur_price / past_price - 1.0) if past_price > 0 else np.nan
             )
@@ -359,14 +447,42 @@ class DualMomentumStrategy(BaseStrategy):
                     "symbol": sym,
                     "name": name,
                     "trade_symbol": sym,
+                    "role": "candidate",
                     "close": round(cur_price, 4),
+                    "past_price": round(past_price, 4),
+                    "past_date": past_date,
                     "ma_value": round(ma_val, 4),
                     "above_ma": above_ma,
                     "momentum_pct": round(float(mom_ret * 100.0), 3)
                     if not pd.isna(mom_ret)
                     else None,
+                    "factor_id": f"ret_{mom_win}d",
+                    "factor_value": round(float(mom_ret * 100.0), 2)
+                    if not pd.isna(mom_ret)
+                    else None,
+                    "factor_value_raw": round(float(mom_ret), 6)
+                    if not pd.isna(mom_ret)
+                    else None,
+                    "factor_value_normalized": round(float(mom_ret), 6)
+                    if not pd.isna(mom_ret)
+                    else None,
+                    "valuation_type": "ma" if enable_ma else "price",
+                    "valuation_value": round(ma_val, 4) if enable_ma else round(cur_price, 4),
                     "passed_filter": passed,
-                    "data_date": s.index[-1].strftime("%Y-%m-%d"),
+                    "data_date": cur_date,
+                    "factor_date": cur_date,
+                    "valuation_date": cur_date,
+                    "weight_strategy": "dual_momentum" if enable_ma else "relative_momentum",
+                    "weight_strategy_params": {
+                        "momentum_window": mom_win,
+                        "ma_window": ma_win,
+                        "enable_ma_filter": enable_ma,
+                        "top_k": top_k,
+                        "fallback_mode": fallback_mode,
+                        "past_date": past_date,
+                        "past_price": round(past_price, 4),
+                        "ma_value": round(ma_val, 4),
+                    },
                 }
             )
 
@@ -400,8 +516,21 @@ class DualMomentumStrategy(BaseStrategy):
                 reason = "无标的通过趋势过滤，空仓观望(Cash=100%)"
 
         for idx, item in enumerate(scored, start=1):
+            item["display_order"] = idx
             item["rank"] = idx
-            item["weight"] = weights.get(item["symbol"], 0.0)
+            w_val = weights.get(item["symbol"], 0.0)
+            item["target_weight"] = w_val
+            item["weight"] = w_val
+            item["actual_weight"] = w_val
+            mom_str = f"{item['momentum_pct']:+.2f}%" if item.get("momentum_pct") is not None else "N/A"
+            base_calc = (
+                f"[排名#{idx}] {mom_win}日动量 = {item['close']:.4f} / {item['past_price']:.4f}({item['past_date']}) - 1 = {mom_str}"
+            )
+            if enable_ma:
+                ma_status = "通过(站上均线且动量>0)" if item["passed_filter"] else f"未通过(现价{item['close']:.4f} vs MA{ma_win}={item['ma_value']:.4f})"
+                item["calculation_process"] = f"{base_calc} | 趋势过滤: {ma_status} -> 目标权重={w_val*100:.1f}%"
+            else:
+                item["calculation_process"] = f"{base_calc} | Top {top_k} 胜出判断 -> 目标权重={w_val*100:.1f}%"
 
         return StrategyDecision(
             signal_date=dt.strftime("%Y-%m-%d"),
@@ -458,16 +587,40 @@ class ThresholdRotationStrategy(BaseStrategy):
             s = prices_df[sym].loc[:dt].dropna()
             if len(s) <= lookback:
                 continue
-            ret = float(s.iloc[-1] / s.iloc[-1 - lookback] - 1.0)
+            cur_price = float(s.iloc[-1])
+            past_price = float(s.iloc[-1 - lookback])
+            past_date = s.index[-1 - lookback].strftime("%Y-%m-%d")
+            cur_date = s.index[-1].strftime("%Y-%m-%d")
+            ret = float(cur_price / past_price - 1.0)
             scored.append(
                 {
                     "symbol": sym,
                     "name": name,
                     "trade_symbol": sym,
-                    "close": round(float(s.iloc[-1]), 4),
+                    "role": "candidate",
+                    "close": round(cur_price, 4),
+                    "past_price": round(past_price, 4),
+                    "past_date": past_date,
                     "momentum": ret,
                     "momentum_pct": round(ret * 100.0, 3),
-                    "data_date": s.index[-1].strftime("%Y-%m-%d"),
+                    "factor_id": f"ret_{lookback}d",
+                    "factor_value": round(ret * 100.0, 2),
+                    "factor_value_raw": round(ret, 6),
+                    "factor_value_normalized": round(ret, 6),
+                    "valuation_type": "price",
+                    "valuation_value": round(cur_price, 4),
+                    "data_date": cur_date,
+                    "factor_date": cur_date,
+                    "valuation_date": cur_date,
+                    "weight_strategy": "threshold_rotation",
+                    "weight_strategy_params": {
+                        "lookback_days": lookback,
+                        "buy_threshold": buy_th,
+                        "sell_threshold": sell_th,
+                        "safe_asset": safe_asset,
+                        "past_date": past_date,
+                        "past_price": round(past_price, 4),
+                    },
                 }
             )
 
@@ -498,13 +651,53 @@ class ThresholdRotationStrategy(BaseStrategy):
             reason = f"轮动持有 {chosen_sym}"
         elif safe_asset:
             weights[str(safe_asset)] = 1.0
-            reason = f"动量低于阈值，转入避险资产 {safe_asset}"
+            reason = f"动量低于买入阈值({buy_th*100:.1f}%)，转入避险资产 {safe_asset}"
         else:
             reason = "动量低于阈值，空仓观望"
 
         for idx, item in enumerate(scored, start=1):
+            item["display_order"] = idx
             item["rank"] = idx
-            item["weight"] = weights.get(item["symbol"], 0.0)
+            w_val = weights.get(item["symbol"], 0.0)
+            item["target_weight"] = w_val
+            item["weight"] = w_val
+            item["actual_weight"] = w_val
+            item["calculation_process"] = (
+                f"[排名#{idx}] {lookback}日动量 = {item['close']:.4f} / {item['past_price']:.4f}({item['past_date']}) - 1 = {item['momentum_pct']:+.2f}% "
+                f"(买入阈值={buy_th*100:.2f}%, 卖出阈值={sell_th*100:.2f}%) -> {reason}，目标权重={w_val*100:.1f}%"
+            )
+
+        if safe_asset:
+            safe_str = str(safe_asset)
+            safe_w = weights.get(safe_str, 0.0)
+            safe_close = None
+            safe_dt = dt.strftime("%Y-%m-%d")
+            if safe_str in prices_df.columns:
+                sub_safe = prices_df[safe_str].loc[:dt].dropna()
+                if not sub_safe.empty:
+                    safe_close = round(float(sub_safe.iloc[-1]), 4)
+                    safe_dt = sub_safe.index[-1].strftime("%Y-%m-%d")
+            scored.append(
+                {
+                    "display_order": len(scored) + 1,
+                    "symbol": safe_str,
+                    "name": f"避险资产({safe_str})",
+                    "trade_symbol": safe_str,
+                    "role": "safe_asset",
+                    "close": safe_close,
+                    "target_weight": safe_w,
+                    "weight": safe_w,
+                    "actual_weight": safe_w,
+                    "data_date": safe_dt,
+                    "valuation_type": "price",
+                    "valuation_value": safe_close,
+                    "weight_strategy": "safe_fallback",
+                    "weight_strategy_params": {"buy_threshold": buy_th, "sell_threshold": sell_th},
+                    "calculation_process": (
+                        f"[避险兜底] 当所有风格ETF动量未达买入阈值({buy_th*100:.2f}%)时承接100%仓位 -> 当前分配权重={safe_w*100:.1f}%"
+                    ),
+                }
+            )
 
         return StrategyDecision(
             signal_date=dt.strftime("%Y-%m-%d"),
@@ -552,6 +745,7 @@ class SbeAllocationStrategy(BaseStrategy):
         max_eq = float(self.params.get("max_equity_weight", 1.0))
 
         sbe_val: Optional[float] = None
+        pe_pct_val: Optional[float] = None
         effective_source = sbe_source
 
         if sbe_sym in prices_df.columns:
@@ -565,19 +759,40 @@ class SbeAllocationStrategy(BaseStrategy):
             if pe_series is not None and not pe_series.empty:
                 sub_pe = pe_series[pe_series.index <= dt]
                 if not sub_pe.empty:
+                    pe_pct_val = float(sub_pe.iloc[-1])
                     # 转换为股债性价比分位 (100 - PE分位)
-                    sbe_val = float(100.0 - sub_pe.iloc[-1])
+                    sbe_val = float(100.0 - pe_pct_val)
                     effective_source = "jiucaishuo"
 
+        eq_close, eq_dt, eq_pe = DynamicAllocationStrategy._extract_asset_snapshot(
+            eq_sym, dt, prices_df, raw_frames
+        )
+        bond_close, bond_dt, _ = DynamicAllocationStrategy._extract_asset_snapshot(
+            bond_sym, dt, prices_df, raw_frames
+        )
+
         if sbe_val is None:
+            raw_eq = 0.5
             eq_w = 0.5
+            eq_calc = "无可用 SBE 分位数据，采用默认均衡权重 50.0%"
         else:
             v = float(np.clip(sbe_val, 0.0, 100.0))
             if effective_source == "danjuan":
                 raw_eq = ((100.0 - v) / 100.0) ** 2
+                formula_str = f"((100 - {v:.2f})/100)^2 = {(100.0-v)/100.0:.4f}^2 = {raw_eq*100:.2f}%"
             else:
                 raw_eq = (v / 100.0) ** 2
+                formula_str = f"(v/100)^2 = ({v:.2f}/100)^2 = ({v/100.0:.4f})^2 = {raw_eq*100:.2f}%"
             eq_w = float(np.clip(raw_eq, min_eq, max_eq))
+            src_note = (
+                f"100 - 10年PE分位({pe_pct_val:.2f}%) = {v:.2f}%"
+                if pe_pct_val is not None
+                else f"{sbe_sym}={v:.2f}%"
+            )
+            eq_calc = (
+                f"[股债性价比(sbe_power)] SBE分位 v = {src_note} | 理论权益权重 w = {formula_str} "
+                f"| 上下限约束 [{min_eq*100:.0f}%, {max_eq*100:.0f}%] -> 最终股票权重={eq_w*100:.2f}%"
+            )
 
         eq_w = round(eq_w, 4)
         bond_w = round(1.0 - eq_w, 4)
@@ -585,18 +800,53 @@ class SbeAllocationStrategy(BaseStrategy):
 
         details = [
             {
+                "display_order": 1,
                 "symbol": eq_sym,
                 "name": eq_name,
+                "trade_symbol": "510300.SH",
                 "role": "equity",
+                "close": eq_close,
+                "pe": eq_pe,
+                "data_date": eq_dt,
+                "factor_date": eq_dt,
+                "valuation_date": eq_dt,
+                "valuation_type": "pe_ratio" if eq_pe is not None else "sbe_percentile",
+                "valuation_value": eq_pe if eq_pe is not None else (round(sbe_val, 2) if sbe_val is not None else None),
+                "factor_id": "sbe_quantile",
+                "factor_value": round(sbe_val, 2) if sbe_val is not None else None,
+                "factor_value_raw": round(sbe_val, 4) if sbe_val is not None else None,
+                "factor_value_normalized": round(sbe_val / 100.0, 6) if sbe_val is not None else None,
+                "target_weight": round(raw_eq, 4),
                 "weight": eq_w,
+                "actual_weight": eq_w,
                 "sbe_quantile": round(sbe_val, 2) if sbe_val is not None else None,
                 "sbe_source": effective_source,
+                "weight_strategy": "sbe_power",
+                "weight_strategy_params": {
+                    "sbe_source": effective_source,
+                    "min_equity_weight": min_eq,
+                    "max_equity_weight": max_eq,
+                    "pe_percentile_10y": round(pe_pct_val, 2) if pe_pct_val is not None else None,
+                },
+                "calculation_process": eq_calc,
             },
             {
+                "display_order": 2,
                 "symbol": bond_sym,
                 "name": bond_name,
+                "trade_symbol": "511090.SH",
                 "role": "bond",
+                "close": bond_close,
+                "data_date": bond_dt,
+                "valuation_date": bond_dt,
+                "valuation_type": "price",
+                "valuation_value": bond_close,
+                "target_weight": bond_w,
                 "weight": bond_w,
+                "actual_weight": bond_w,
+                "weight_strategy": "residual",
+                "weight_strategy_params": {"formula": "1 - equity_weight"},
+                "calculation_process": f"[债券补足(residual)] w = 100% - 股票权重({eq_w*100:.2f}%) = {bond_w*100:.2f}%",
             },
         ]
 
@@ -637,7 +887,19 @@ class EqualWeightStrategy(BaseStrategy):
             return StrategyDecision(dt.strftime("%Y-%m-%d"), {}, [], "无有效资产")
         w = round(1.0 / len(syms), 6)
         weights = {s: w for s in syms}
-        details = [{"symbol": s, "name": s, "weight": w} for s in syms]
+        details = [
+            {
+                "display_order": idx,
+                "symbol": s,
+                "name": s,
+                "target_weight": w,
+                "weight": w,
+                "actual_weight": w,
+                "weight_strategy": "equal_weight",
+                "calculation_process": f"等权配置: 1 / {len(syms)} = {w*100:.2f}%",
+            }
+            for idx, s in enumerate(syms, start=1)
+        ]
         return StrategyDecision(
             signal_date=dt.strftime("%Y-%m-%d"),
             weights=weights,

@@ -27,3 +27,5 @@ venv/
 index_fetcher/
 now_asset/
 strategy/
+
+.vercel

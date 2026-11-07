@@ -141,6 +141,38 @@ class QuantPipeline:
                 out_dir / "rebalance_log.csv", index=False
             )
 
+        # 写入策略实验室回测实验记录表 (strategy_backtest_runs)
+        try:
+            exec_cfg = strategy_cfg.get("execution") or {}
+            reb_cfg = strategy_cfg.get("rebalance") or {}
+            run_id = f"{strategy_id}__{start_date or 'init'}_{end_date or 'latest'}"
+            latest_details = (
+                result.latest_decision.asset_details
+                if result.latest_decision
+                else []
+            )
+            self.db.upsert_strategy_backtest_run(
+                {
+                    "run_id": run_id,
+                    "strategy_id": strategy_id,
+                    "strategy_name": strategy.name,
+                    "run_mode": "lab" if not save_outputs else "verified",
+                    "status": "verified",
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "trading_days": result.metrics.get("trading_days", 0),
+                    "rebalance_frequency": reb_cfg.get("frequency", "quarter"),
+                    "commission_rate": float(exec_cfg.get("commission_rate", 0.0005)),
+                    "slippage_rate": float(exec_cfg.get("slippage_rate", 0.0005)),
+                    "config_snapshot": strategy_cfg,
+                    "metrics": result.metrics,
+                    "latest_details": latest_details,
+                    "rebalance_log": result.rebalance_log[-50:],
+                }
+            )
+        except Exception as exc:
+            logger.warning("记录策略实验室回测结果异常: %s", exc)
+
         return result
 
     # ------------------------------------------------------------------

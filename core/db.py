@@ -125,6 +125,25 @@ class DatabaseGateway:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS strategy_meta (
+                strategy_id VARCHAR(64) PRIMARY KEY,
+                strategy_name VARCHAR(128) NOT NULL,
+                strategy_type VARCHAR(64) NOT NULL,
+                version VARCHAR(32) NOT NULL DEFAULT '2.0',
+                status VARCHAR(32) NOT NULL DEFAULT 'live',
+                description TEXT,
+                rebalance_frequency VARCHAR(32),
+                execution_mode VARCHAR(64),
+                signal_cutoff VARCHAR(64),
+                commission_rate DOUBLE PRECISION,
+                slippage_rate DOUBLE PRECISION,
+                rebalance_config TEXT,
+                strategy_params TEXT,
+                assets_config TEXT,
+                updated_at VARCHAR(32)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS strategy_signals (
                 strategy_id VARCHAR(64) NOT NULL,
                 strategy_name VARCHAR(128) NOT NULL,
@@ -141,6 +160,66 @@ class DatabaseGateway:
                 config_snapshot TEXT,
                 updated_at VARCHAR(32),
                 PRIMARY KEY (strategy_id, signal_date, run_mode)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS strategy_signal_asset_details (
+                strategy_id VARCHAR(64) NOT NULL,
+                signal_date VARCHAR(16) NOT NULL,
+                run_mode VARCHAR(32) NOT NULL DEFAULT 'live',
+                display_order INTEGER NOT NULL DEFAULT 1,
+                asset_symbol VARCHAR(64) NOT NULL,
+                asset_name VARCHAR(128) NOT NULL,
+                trade_symbol VARCHAR(64),
+                role VARCHAR(32),
+                weight_strategy VARCHAR(64),
+                base_weight DOUBLE PRECISION,
+                param_c1 DOUBLE PRECISION,
+                weight_strategy_params TEXT,
+                target_weight DOUBLE PRECISION,
+                remaining_before DOUBLE PRECISION,
+                actual_weight DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                factor_id VARCHAR(64),
+                factor_value_raw DOUBLE PRECISION,
+                factor_value_normalized DOUBLE PRECISION,
+                factor_date VARCHAR(16),
+                close_price DOUBLE PRECISION,
+                valuation_type VARCHAR(32),
+                valuation_value DOUBLE PRECISION,
+                valuation_date VARCHAR(16),
+                calculation_process TEXT NOT NULL,
+                updated_at VARCHAR(32),
+                PRIMARY KEY (strategy_id, signal_date, run_mode, asset_symbol)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS strategy_backtest_runs (
+                run_id VARCHAR(96) PRIMARY KEY,
+                strategy_id VARCHAR(64) NOT NULL,
+                strategy_name VARCHAR(128) NOT NULL,
+                run_mode VARCHAR(32) NOT NULL DEFAULT 'lab',
+                status VARCHAR(32) NOT NULL DEFAULT 'verified',
+                start_date VARCHAR(16),
+                end_date VARCHAR(16),
+                trading_days INTEGER,
+                rebalance_frequency VARCHAR(32),
+                commission_rate DOUBLE PRECISION,
+                slippage_rate DOUBLE PRECISION,
+                total_return DOUBLE PRECISION,
+                cagr DOUBLE PRECISION,
+                annual_volatility DOUBLE PRECISION,
+                max_drawdown DOUBLE PRECISION,
+                sharpe_ratio DOUBLE PRECISION,
+                sortino_ratio DOUBLE PRECISION,
+                calmar_ratio DOUBLE PRECISION,
+                daily_win_rate DOUBLE PRECISION,
+                rebalance_count INTEGER,
+                final_nav DOUBLE PRECISION,
+                config_snapshot TEXT,
+                metrics_json TEXT,
+                latest_details_json TEXT,
+                rebalance_log_json TEXT,
+                updated_at VARCHAR(32)
             )
             """,
         ]
@@ -617,13 +696,146 @@ class DatabaseGateway:
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
-    # 4. 策略信号单表 (strategy_signals)
+    # 4. 策略元数据与参数配置表 (strategy_meta)
+    # ------------------------------------------------------------------
+    def sync_strategy_meta_from_configs(self) -> int:
+        """从 configs/strategies/*.yaml 自动解析并同步策略参数配置表 strategy_meta"""
+        rows: List[Dict[str, Any]] = []
+        for sid in self.config.list_strategies():
+            try:
+                cfg = self.config.load_strategy_config(sid)
+            except Exception as exc:
+                logger.warning("读取策略配置 %s 失败: %s", sid, exc)
+                continue
+            exec_cfg = cfg.get("execution") or {}
+            reb_cfg = cfg.get("rebalance") or {}
+            params = dict(cfg.get("strategy_params") or {})
+            assets_list = list(params.pop("assets", []) or [])
+            rows.append(
+                {
+                    "strategy_id": str(cfg.get("strategy_id", sid)),
+                    "strategy_name": str(cfg.get("name", sid)),
+                    "strategy_type": str(cfg.get("type", "dynamic_engine")),
+                    "version": str(cfg.get("version", "2.0")),
+                    "status": str(cfg.get("status", "live")),
+                    "description": str(cfg.get("description", "")),
+                    "rebalance_frequency": str(reb_cfg.get("frequency", "quarter")),
+                    "execution_mode": str(exec_cfg.get("mode", "next_day_close_proxy")),
+                    "signal_cutoff": str(
+                        exec_cfg.get("signal_cutoff", "previous_day_close")
+                    ),
+                    "commission_rate": float(exec_cfg.get("commission_rate", 0.0005)),
+                    "slippage_rate": float(exec_cfg.get("slippage_rate", 0.0005)),
+                    "rebalance_config": reb_cfg,
+                    "strategy_params": params,
+                    "assets_config": assets_list,
+                }
+            )
+        return self.upsert_strategy_meta(rows)
+
+    def upsert_strategy_meta(self, rows: List[Dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self.engine.begin() as conn:
+            for r in rows:
+                sid = str(r["strategy_id"])
+                conn.execute(
+                    text("DELETE FROM strategy_meta WHERE strategy_id = :sid"),
+                    {"sid": sid},
+                )
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO strategy_meta
+                        (strategy_id, strategy_name, strategy_type, version, status, description,
+                         rebalance_frequency, execution_mode, signal_cutoff, commission_rate, slippage_rate,
+                         rebalance_config, strategy_params, assets_config, updated_at)
+                        VALUES (:strategy_id, :strategy_name, :strategy_type, :version, :status, :description,
+                                :rebalance_frequency, :execution_mode, :signal_cutoff, :commission_rate, :slippage_rate,
+                                :rebalance_config, :strategy_params, :assets_config, :updated_at)
+                        """
+                    ),
+                    {
+                        "strategy_id": sid,
+                        "strategy_name": r.get("strategy_name", sid),
+                        "strategy_type": r.get("strategy_type", "dynamic_engine"),
+                        "version": str(r.get("version", "2.0")),
+                        "status": str(r.get("status", "live")),
+                        "description": r.get("description", ""),
+                        "rebalance_frequency": r.get("rebalance_frequency", "quarter"),
+                        "execution_mode": r.get(
+                            "execution_mode", "next_day_close_proxy"
+                        ),
+                        "signal_cutoff": r.get(
+                            "signal_cutoff", "previous_day_close"
+                        ),
+                        "commission_rate": float(r.get("commission_rate", 0.0005)),
+                        "slippage_rate": float(r.get("slippage_rate", 0.0005)),
+                        "rebalance_config": json.dumps(
+                            r.get("rebalance_config") or {}, ensure_ascii=False
+                        )
+                        if not isinstance(r.get("rebalance_config"), str)
+                        else r.get("rebalance_config"),
+                        "strategy_params": json.dumps(
+                            r.get("strategy_params") or {}, ensure_ascii=False
+                        )
+                        if not isinstance(r.get("strategy_params"), str)
+                        else r.get("strategy_params"),
+                        "assets_config": json.dumps(
+                            r.get("assets_config") or [], ensure_ascii=False
+                        )
+                        if not isinstance(r.get("assets_config"), str)
+                        else r.get("assets_config"),
+                        "updated_at": now_str,
+                    },
+                )
+        if self._client is not None:
+            try:
+                clean_rows = self._clean_records_for_json(rows)
+                self._client.table("strategy_meta").upsert(
+                    clean_rows, on_conflict="strategy_id"
+                ).execute()
+            except Exception as exc:
+                logger.warning("写入远端 strategy_meta 失败: %s", exc)
+        return len(rows)
+
+    def fetch_strategy_meta(
+        self, strategy_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM strategy_meta"
+        params: Dict[str, Any] = {}
+        if strategy_id:
+            sql += " WHERE strategy_id = :strategy_id"
+            params["strategy_id"] = strategy_id
+        sql += " ORDER BY strategy_id ASC"
+        with self.engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params)
+        if df.empty:
+            self.sync_strategy_meta_from_configs()
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            item = dict(row)
+            for jcol in ["rebalance_config", "strategy_params", "assets_config"]:
+                if isinstance(item.get(jcol), str) and item[jcol]:
+                    try:
+                        item[jcol] = json.loads(item[jcol])
+                    except Exception:
+                        pass
+            results.append(item)
+        return results
+
+    # ------------------------------------------------------------------
+    # 5. 策略信号主表 (strategy_signals) 与单资产计算过程表 (strategy_signal_asset_details)
     # ------------------------------------------------------------------
     def upsert_strategy_signal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         strategy_id = str(payload["strategy_id"])
         signal_date = str(payload["signal_date"])[:10]
         run_mode = str(payload.get("run_mode", "live"))
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        details_list = payload.get("asset_details") or []
 
         with self.engine.begin() as conn:
             conn.execute(
@@ -665,9 +877,7 @@ class DatabaseGateway:
                     "weights": json.dumps(
                         payload.get("weights") or {}, ensure_ascii=False
                     ),
-                    "asset_details": json.dumps(
-                        payload.get("asset_details") or [], ensure_ascii=False
-                    ),
+                    "asset_details": json.dumps(details_list, ensure_ascii=False),
                     "metrics_snapshot": json.dumps(
                         payload.get("metrics_snapshot") or {}, ensure_ascii=False
                     ),
@@ -678,6 +888,111 @@ class DatabaseGateway:
                 },
             )
 
+            # 同步落库单资产计算过程与参数验算明细表 strategy_signal_asset_details
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM strategy_signal_asset_details
+                    WHERE strategy_id = :strategy_id AND signal_date = :signal_date AND run_mode = :run_mode
+                    """
+                ),
+                {
+                    "strategy_id": strategy_id,
+                    "signal_date": signal_date,
+                    "run_mode": run_mode,
+                },
+            )
+            detail_rows_to_insert: List[Dict[str, Any]] = []
+            for idx, d in enumerate(details_list, start=1):
+                sym = str(d.get("symbol") or d.get("asset_symbol") or f"ASSET_{idx}")
+                raw_target = d.get("target_weight")
+                act_w = d.get("actual_weight", d.get("weight", 0.0))
+                rem_before = d.get("remaining_before")
+                f_raw = d.get("factor_value_raw", d.get("factor_value"))
+                f_norm = d.get("factor_value_normalized")
+                c1_v = d.get("c1")
+                base_w = d.get("base_weight")
+                close_v = d.get("close")
+                val_v = d.get("valuation_value", d.get("pe", d.get("ma_value", close_v)))
+                val_type = d.get("valuation_type") or (
+                    "pe_ratio" if d.get("pe") is not None else "price"
+                )
+                w_params = d.get("weight_strategy_params") or {}
+                calc_proc = str(
+                    d.get("calculation_process")
+                    or f"目标权重={float(act_w or 0.0)*100:.2f}%"
+                )
+                detail_rows_to_insert.append(
+                    {
+                        "strategy_id": strategy_id,
+                        "signal_date": signal_date,
+                        "run_mode": run_mode,
+                        "display_order": int(d.get("display_order", d.get("rank", idx))),
+                        "asset_symbol": sym,
+                        "asset_name": str(d.get("name") or d.get("asset_name") or sym),
+                        "trade_symbol": d.get("trade_symbol"),
+                        "role": d.get("role"),
+                        "weight_strategy": d.get("weight_strategy"),
+                        "base_weight": float(base_w)
+                        if base_w is not None and not pd.isna(base_w)
+                        else None,
+                        "param_c1": float(c1_v)
+                        if c1_v is not None and not pd.isna(c1_v)
+                        else None,
+                        "weight_strategy_params": json.dumps(
+                            w_params, ensure_ascii=False
+                        ),
+                        "target_weight": float(raw_target)
+                        if raw_target is not None and not pd.isna(raw_target)
+                        else float(act_w or 0.0),
+                        "remaining_before": float(rem_before)
+                        if rem_before is not None and not pd.isna(rem_before)
+                        else None,
+                        "actual_weight": float(act_w or 0.0),
+                        "factor_id": d.get("factor_id"),
+                        "factor_value_raw": float(f_raw)
+                        if f_raw is not None and not pd.isna(f_raw)
+                        else None,
+                        "factor_value_normalized": float(f_norm)
+                        if f_norm is not None and not pd.isna(f_norm)
+                        else None,
+                        "factor_date": str(
+                            d.get("factor_date") or d.get("data_date") or signal_date
+                        )[:10],
+                        "close_price": float(close_v)
+                        if close_v is not None and not pd.isna(close_v)
+                        else None,
+                        "valuation_type": val_type,
+                        "valuation_value": float(val_v)
+                        if val_v is not None and not pd.isna(val_v)
+                        else None,
+                        "valuation_date": str(
+                            d.get("valuation_date") or d.get("data_date") or signal_date
+                        )[:10],
+                        "calculation_process": calc_proc,
+                        "updated_at": now_str,
+                    }
+                )
+            if detail_rows_to_insert:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO strategy_signal_asset_details
+                        (strategy_id, signal_date, run_mode, display_order, asset_symbol, asset_name,
+                         trade_symbol, role, weight_strategy, base_weight, param_c1, weight_strategy_params,
+                         target_weight, remaining_before, actual_weight, factor_id, factor_value_raw,
+                         factor_value_normalized, factor_date, close_price, valuation_type, valuation_value,
+                         valuation_date, calculation_process, updated_at)
+                        VALUES (:strategy_id, :signal_date, :run_mode, :display_order, :asset_symbol, :asset_name,
+                                :trade_symbol, :role, :weight_strategy, :base_weight, :param_c1, :weight_strategy_params,
+                                :target_weight, :remaining_before, :actual_weight, :factor_id, :factor_value_raw,
+                                :factor_value_normalized, :factor_date, :close_price, :valuation_type, :valuation_value,
+                                :valuation_date, :calculation_process, :updated_at)
+                        """
+                    ),
+                    detail_rows_to_insert,
+                )
+
         if self._client is not None:
             try:
                 clean = self._clean_records_for_json([payload])[0]
@@ -686,6 +1001,17 @@ class DatabaseGateway:
                 ).execute()
             except Exception as exc:
                 logger.warning("写入远端 strategy_signals 失败: %s", exc)
+            if detail_rows_to_insert:
+                try:
+                    clean_details = self._clean_records_for_json(detail_rows_to_insert)
+                    self._client.table("strategy_signal_asset_details").upsert(
+                        clean_details,
+                        on_conflict="strategy_id,signal_date,run_mode,asset_symbol",
+                    ).execute()
+                except Exception as exc:
+                    logger.warning(
+                        "写入远端 strategy_signal_asset_details 失败: %s", exc
+                    )
 
         return payload
 
@@ -721,11 +1047,168 @@ class DatabaseGateway:
             results.append(item)
         return results
 
+    def fetch_strategy_signal_asset_details(
+        self,
+        strategy_id: Optional[str] = None,
+        signal_date: Optional[str] = None,
+        run_mode: str = "live",
+    ) -> List[Dict[str, Any]]:
+        clauses = ["run_mode = :run_mode"]
+        params: Dict[str, Any] = {"run_mode": run_mode}
+        if strategy_id:
+            clauses.append("strategy_id = :strategy_id")
+            params["strategy_id"] = strategy_id
+        if signal_date:
+            clauses.append("signal_date = :signal_date")
+            params["signal_date"] = str(signal_date)[:10]
+
+        sql = f"SELECT * FROM strategy_signal_asset_details WHERE {' AND '.join(clauses)} ORDER BY signal_date DESC, strategy_id ASC, display_order ASC"
+        with self.engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params)
+        if df.empty:
+            return []
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            item = dict(row)
+            if isinstance(item.get("weight_strategy_params"), str) and item["weight_strategy_params"]:
+                try:
+                    item["weight_strategy_params"] = json.loads(
+                        item["weight_strategy_params"]
+                    )
+                except Exception:
+                    pass
+            results.append(item)
+        return results
+
     # ------------------------------------------------------------------
-    # 5. 数据库概览与一键迁移到 Supabase
+    # 6. 策略实验室回测实验记录表 (strategy_backtest_runs)
+    # ------------------------------------------------------------------
+    def upsert_strategy_backtest_run(
+        self, run_record: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        run_id = str(run_record["run_id"])
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        metrics = run_record.get("metrics") or {}
+        row_params = {
+            "run_id": run_id,
+            "strategy_id": str(run_record["strategy_id"]),
+            "strategy_name": str(
+                run_record.get("strategy_name", run_record["strategy_id"])
+            ),
+            "run_mode": str(run_record.get("run_mode", "lab")),
+            "status": str(run_record.get("status", "verified")),
+            "start_date": run_record.get("start_date") or metrics.get("start_date"),
+            "end_date": run_record.get("end_date") or metrics.get("end_date"),
+            "trading_days": int(
+                run_record.get("trading_days") or metrics.get("trading_days") or 0
+            ),
+            "rebalance_frequency": str(
+                run_record.get("rebalance_frequency", "quarter")
+            ),
+            "commission_rate": float(run_record.get("commission_rate", 0.0005)),
+            "slippage_rate": float(run_record.get("slippage_rate", 0.0005)),
+            "total_return": float(metrics.get("total_return", 0.0)),
+            "cagr": float(metrics.get("cagr", 0.0)),
+            "annual_volatility": float(metrics.get("annual_volatility", 0.0)),
+            "max_drawdown": float(metrics.get("max_drawdown", 0.0)),
+            "sharpe_ratio": float(metrics.get("sharpe_ratio", 0.0)),
+            "sortino_ratio": float(metrics.get("sortino_ratio", 0.0)),
+            "calmar_ratio": float(metrics.get("calmar_ratio", 0.0)),
+            "daily_win_rate": float(metrics.get("daily_win_rate", 0.0)),
+            "rebalance_count": int(metrics.get("rebalance_count", 0)),
+            "final_nav": float(metrics.get("final_nav", 1.0)),
+            "config_snapshot": json.dumps(
+                run_record.get("config_snapshot") or {}, ensure_ascii=False
+            ),
+            "metrics_json": json.dumps(metrics, ensure_ascii=False),
+            "latest_details_json": json.dumps(
+                run_record.get("latest_details") or [], ensure_ascii=False
+            ),
+            "rebalance_log_json": json.dumps(
+                run_record.get("rebalance_log") or [], ensure_ascii=False
+            ),
+            "updated_at": now_str,
+        }
+
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM strategy_backtest_runs WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO strategy_backtest_runs
+                    (run_id, strategy_id, strategy_name, run_mode, status, start_date, end_date,
+                     trading_days, rebalance_frequency, commission_rate, slippage_rate,
+                     total_return, cagr, annual_volatility, max_drawdown, sharpe_ratio,
+                     sortino_ratio, calmar_ratio, daily_win_rate, rebalance_count, final_nav,
+                     config_snapshot, metrics_json, latest_details_json, rebalance_log_json, updated_at)
+                    VALUES (:run_id, :strategy_id, :strategy_name, :run_mode, :status, :start_date, :end_date,
+                            :trading_days, :rebalance_frequency, :commission_rate, :slippage_rate,
+                            :total_return, :cagr, :annual_volatility, :max_drawdown, :sharpe_ratio,
+                            :sortino_ratio, :calmar_ratio, :daily_win_rate, :rebalance_count, :final_nav,
+                            :config_snapshot, :metrics_json, :latest_details_json, :rebalance_log_json, :updated_at)
+                    """
+                ),
+                row_params,
+            )
+
+        if self._client is not None:
+            try:
+                clean = self._clean_records_for_json([row_params])[0]
+                self._client.table("strategy_backtest_runs").upsert(
+                    clean, on_conflict="run_id"
+                ).execute()
+            except Exception as exc:
+                logger.warning("写入远端 strategy_backtest_runs 失败: %s", exc)
+
+        return row_params
+
+    def fetch_strategy_backtest_runs(
+        self,
+        strategy_id: Optional[str] = None,
+        run_mode: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        clauses: List[str] = []
+        params: Dict[str, Any] = {}
+        if strategy_id:
+            clauses.append("strategy_id = :strategy_id")
+            params["strategy_id"] = strategy_id
+        if run_mode:
+            clauses.append("run_mode = :run_mode")
+            params["run_mode"] = run_mode
+        sql = "SELECT * FROM strategy_backtest_runs"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY updated_at DESC, run_id ASC"
+        with self.engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params)
+        if df.empty:
+            return []
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            item = dict(row)
+            for jcol in [
+                "config_snapshot",
+                "metrics_json",
+                "latest_details_json",
+                "rebalance_log_json",
+            ]:
+                if isinstance(item.get(jcol), str) and item[jcol]:
+                    try:
+                        item[jcol] = json.loads(item[jcol])
+                    except Exception:
+                        pass
+            results.append(item)
+        return results
+
+    # ------------------------------------------------------------------
+    # 7. 数据库概览与一键迁移到 Supabase
     # ------------------------------------------------------------------
     def get_database_overview(self) -> Dict[str, Any]:
-        """统计本地关系型数据库中 4 张核心表的数据量与最新状态"""
+        """统计本地关系型数据库中全部 7 张核心表的数据量与最新状态"""
+        self.sync_strategy_meta_from_configs()
         with self.engine.connect() as conn:
             meta_df = pd.read_sql(
                 text("SELECT * FROM asset_meta ORDER BY asset_type, symbol"),
@@ -761,8 +1244,17 @@ class DatabaseGateway:
                 ),
                 conn,
             )
+            strat_meta_cnt = conn.execute(
+                text("SELECT COUNT(*) FROM strategy_meta")
+            ).scalar()
             sig_count = conn.execute(
                 text("SELECT COUNT(*) FROM strategy_signals")
+            ).scalar()
+            sig_detail_count = conn.execute(
+                text("SELECT COUNT(*) FROM strategy_signal_asset_details")
+            ).scalar()
+            bt_run_count = conn.execute(
+                text("SELECT COUNT(*) FROM strategy_backtest_runs")
             ).scalar()
             mkt_total = conn.execute(
                 text("SELECT COUNT(*) FROM market_daily")
@@ -778,15 +1270,19 @@ class DatabaseGateway:
                 "asset_meta": len(meta_df),
                 "market_daily": int(mkt_total or 0),
                 "factor_daily": int(fac_total or 0),
+                "strategy_meta": int(strat_meta_cnt or 0),
                 "strategy_signals": int(sig_count or 0),
+                "strategy_signal_asset_details": int(sig_detail_count or 0),
+                "strategy_backtest_runs": int(bt_run_count or 0),
             },
             "asset_meta": meta_df.to_dict(orient="records"),
+            "strategy_meta": self.fetch_strategy_meta(),
             "market_summary": mkt_stats.to_dict(orient="records"),
             "factor_summary": fac_stats.to_dict(orient="records"),
         }
 
     def migrate_to_supabase(self, chunk_size: int = 1500) -> Dict[str, int]:
-        """将本地关系库中的 4 张核心表一键全量推送到远端 Supabase"""
+        """将本地关系库中的 7 张核心表一键全量推送到远端 Supabase"""
         if self._client is None:
             raise RuntimeError(
                 "尚未配置 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY，请先在 .env 中配置后再执行迁移。"
@@ -795,7 +1291,10 @@ class DatabaseGateway:
             "asset_meta": 0,
             "market_daily": 0,
             "factor_daily": 0,
+            "strategy_meta": 0,
             "strategy_signals": 0,
+            "strategy_signal_asset_details": 0,
+            "strategy_backtest_runs": 0,
         }
         with self.engine.connect() as conn:
             # 1. asset_meta
@@ -848,7 +1347,19 @@ class DatabaseGateway:
                 stats["factor_daily"] = len(rows)
                 logger.info("已迁移 factor_daily: %d 行", len(rows))
 
-            # 4. strategy_signals
+            # 4. strategy_meta
+            df_smeta = pd.read_sql(text("SELECT * FROM strategy_meta"), conn)
+            if not df_smeta.empty:
+                rows = self._clean_records_for_json(df_smeta.to_dict("records"))
+                try:
+                    self._client.table("strategy_meta").upsert(
+                        rows, on_conflict="strategy_id"
+                    ).execute()
+                    stats["strategy_meta"] = len(rows)
+                except Exception as exc:
+                    logger.warning("迁移 strategy_meta 跳过: %s", exc)
+
+            # 5. strategy_signals
             sigs = self.fetch_all_strategy_signals()
             if sigs:
                 rows = self._clean_records_for_json(sigs)
@@ -859,6 +1370,33 @@ class DatabaseGateway:
                 ).execute()
                 stats["strategy_signals"] = len(rows)
                 logger.info("已迁移 strategy_signals: %d 行", len(rows))
+
+            # 6. strategy_signal_asset_details
+            df_sdet = pd.read_sql(
+                text("SELECT * FROM strategy_signal_asset_details"), conn
+            )
+            if not df_sdet.empty:
+                rows = self._clean_records_for_json(df_sdet.to_dict("records"))
+                try:
+                    self._client.table("strategy_signal_asset_details").upsert(
+                        rows,
+                        on_conflict="strategy_id,signal_date,run_mode,asset_symbol",
+                    ).execute()
+                    stats["strategy_signal_asset_details"] = len(rows)
+                except Exception as exc:
+                    logger.warning("迁移 strategy_signal_asset_details 跳过: %s", exc)
+
+            # 7. strategy_backtest_runs
+            df_btr = pd.read_sql(text("SELECT * FROM strategy_backtest_runs"), conn)
+            if not df_btr.empty:
+                rows = self._clean_records_for_json(df_btr.to_dict("records"))
+                try:
+                    self._client.table("strategy_backtest_runs").upsert(
+                        rows, on_conflict="run_id"
+                    ).execute()
+                    stats["strategy_backtest_runs"] = len(rows)
+                except Exception as exc:
+                    logger.warning("迁移 strategy_backtest_runs 跳过: %s", exc)
 
         return stats
 
