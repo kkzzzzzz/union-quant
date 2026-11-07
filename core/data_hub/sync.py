@@ -134,7 +134,7 @@ class DataSyncService:
             val_bars: List[MarketBar] = []
             if src.get("howbuy_zsdm"):
                 val_bars = self.howbuy.fetch_history_valuation(
-                    spec.symbol, src["howbuy_zsdm"], cycle="1N"
+                    spec.symbol, src["howbuy_zsdm"], cycle="10N"
                 )
                 for vb in val_bars:
                     if vb.trade_date >= start_date:
