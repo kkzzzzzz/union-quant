@@ -130,7 +130,16 @@ class DataSyncService:
                     existing[k] = v
 
         if spec.asset_type == "index":
-            # 1) 近期日线兜底
+            # 1) 好买估值（先写入估值与 zbjz 收盘价兜底，后续由行情源覆盖精细 OHLC）
+            val_bars: List[MarketBar] = []
+            if src.get("howbuy_zsdm"):
+                val_bars = self.howbuy.fetch_history_valuation(
+                    spec.symbol, src["howbuy_zsdm"], cycle="1N"
+                )
+                for vb in val_bars:
+                    if vb.trade_date >= start_date:
+                        _merge_bar(vb)
+            # 2) 近期日线兜底
             if src.get("ak_symbol"):
                 for b in self.akshare.fetch_index_history(
                     spec.symbol,
@@ -139,19 +148,15 @@ class DataSyncService:
                     start_date=start_date,
                 ):
                     _merge_bar(b)
-            # 2) 新浪实时最新行情
+            # 3) 新浪实时最新行情
             price_bar = None
             if src.get("sina_code"):
                 price_bar = self.sina.fetch_realtime_bar(
                     spec.symbol, src["sina_code"]
                 )
                 _merge_bar(price_bar)
-            # 3) 好买估值（自动分拆日期，防止估值滞后污染当日行情或丢失）
             if src.get("howbuy_zsdm"):
-                val_bar = self.howbuy.fetch_latest_valuation(
-                    spec.symbol, src["howbuy_zsdm"]
-                )
-                _merge_bar(val_bar)
+                val_bar = val_bars[-1] if val_bars else None
                 if (
                     price_bar
                     and val_bar
@@ -165,6 +170,28 @@ class DataSyncService:
                             "valuation_date": val_bar.trade_date,
                         }
                     )
+                # 对最新 1-2 个交易日若估值尚未出炉，按最新收盘点位等比动态推算/前值延续 PE/PB/GXL
+                last_pe, last_pb, last_dy, last_close = None, None, None, None
+                for dt_key in sorted(records_by_date.keys()):
+                    rec_item = records_by_date[dt_key]
+                    c_val = rec_item.get("close")
+                    if rec_item.get("pe") is not None:
+                        last_pe = rec_item["pe"]
+                        if c_val:
+                            last_close = c_val
+                    elif last_pe is not None:
+                        if c_val and last_close and last_close > 0:
+                            rec_item["pe"] = round(last_pe * (c_val / last_close), 2)
+                        else:
+                            rec_item["pe"] = last_pe
+                    if rec_item.get("pb") is not None:
+                        last_pb = rec_item["pb"]
+                    elif last_pb is not None:
+                        rec_item["pb"] = last_pb
+                    if rec_item.get("dividend_yield") is not None:
+                        last_dy = rec_item["dividend_yield"]
+                    elif last_dy is not None:
+                        rec_item["dividend_yield"] = last_dy
 
         elif spec.asset_type == "bond":
             for b in self.chinabond.fetch_bars(
@@ -221,7 +248,7 @@ class DataSyncService:
                 continue
             try:
                 bars = self.howbuy.fetch_history_valuation(
-                    spec.symbol, zsdm, cycle="1m"
+                    spec.symbol, zsdm, cycle="1N"
                 )
                 latest = self.howbuy.fetch_latest_valuation(spec.symbol, zsdm)
                 if latest:
@@ -267,7 +294,7 @@ class DataSyncService:
                             records_by_date[b.trade_date] = b.to_record()
                     if src.get("howbuy_zsdm"):
                         for b in self.howbuy.fetch_history_valuation(
-                            spec.symbol, src["howbuy_zsdm"], cycle="10y"
+                            spec.symbol, src["howbuy_zsdm"], cycle="10N"
                         ):
                             rec = b.to_record()
                             dt = rec["trade_date"]

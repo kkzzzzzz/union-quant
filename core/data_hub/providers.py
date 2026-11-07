@@ -142,87 +142,92 @@ class SinaQuoteProvider:
 # 2. 好买基金估值源 (HowbuyValuationProvider)
 # ==============================================================================
 class HowbuyValuationProvider:
-    """好买指数估值接口 (PE / PB / 股息率 / ROE 最新值与历史全量序列)"""
+    """好买指数估值接口 (PE / PB / 股息率 最新值与历史全量序列)"""
 
-    DETAIL_URL = "https://data.howbuy.com/cgi/fund/zszq/zsgz/detail.json"
-    HISTORY_URL = "https://data.howbuy.com/cgi/fund/zszq/zsgz/zst.json"
+    BASE_URL = "https://data.howbuy.com/cgi/fund/zszq/zsgz/zst.json"
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.howbuy.com/",
-        "Origin": "https://www.howbuy.com",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://trade.ehowbuy.com/",
+        "Accept": "application/json, text/plain, */*",
     }
 
     def fetch_latest_valuation(self, symbol: str, zsdm: str) -> Optional[MarketBar]:
         """获取指数最新单日估值快照"""
         try:
-            resp = requests.post(
-                self.DETAIL_URL,
-                data={"zsdm": zsdm},
-                headers=self.HEADERS,
-                timeout=10,
-            )
-            data = resp.json().get("data") or {}
-            gz_date = data.get("gzDate") or data.get("rq")
-            if not gz_date:
-                # 回退从历史曲线取最后一条
-                hist = self.fetch_history_valuation(symbol, zsdm, cycle="1m")
-                return hist[-1] if hist else None
-
-            raw_dt = str(gz_date).replace("/", "-")
-            if len(raw_dt) == 8 and raw_dt.isdigit():
-                raw_dt = f"{raw_dt[:4]}-{raw_dt[4:6]}-{raw_dt[6:8]}"
-
-            return MarketBar(
-                symbol=symbol,
-                trade_date=raw_dt[:10],
-                pe=_safe_float(data.get("pe") or data.get("peTtm")),
-                pb=_safe_float(data.get("pb")),
-                dividend_yield=_safe_float(data.get("gxl")),
-                roe=_safe_float(data.get("roe")),
-            )
+            bars = self.fetch_history_valuation(symbol, zsdm, cycle="1N")
+            if bars:
+                return bars[-1]
+            return None
         except Exception as exc:
             logger.warning("Howbuy 最新估值获取失败 [%s/%s]: %s", symbol, zsdm, exc)
             return None
 
     def fetch_history_valuation(
-        self, symbol: str, zsdm: str, cycle: str = "10y"
+        self, symbol: str, zsdm: str, cycle: str = "10N"
     ) -> List[MarketBar]:
         """获取指数历史估值序列 (PE/PB/GXL 合并按日期对齐)"""
-        series_map: Dict[str, Dict[str, float]] = {}
-        # field_type: 1=PE, 2=PB, 3=股息率
-        for field_code, attr_name in [("1", "pe"), ("2", "pb"), ("3", "dividend_yield")]:
+        series_map: Dict[str, Dict[str, Any]] = {}
+        # metric code: pe=市盈率, pb=市净率, gxl=股息率
+        for metric_type, attr_name in [("pe", "pe"), ("pb", "pb"), ("gxl", "dividend_yield")]:
             try:
-                resp = requests.post(
-                    self.HISTORY_URL,
-                    data={"zsdm": zsdm, "type": field_code, "cycle": cycle},
+                resp = requests.get(
+                    self.BASE_URL,
+                    params={
+                        "type": metric_type,
+                        "zsdm": zsdm,
+                        "time": cycle,
+                        "hctime": "1N",
+                        "gdfwState": "1",
+                    },
                     headers=self.HEADERS,
                     timeout=15,
                 )
-                payload = resp.json().get("data") or {}
-                items = payload.get("list") or payload.get("zstList") or []
+                if resp.status_code != 200:
+                    continue
+                payload = resp.json().get("body", {}).get("zsgzDTO", {}) or {}
+                items = payload.get("zshqList") or []
                 for item in items:
-                    dt_raw = str(item.get("rq") or item.get("date") or "").strip()
-                    val = _safe_float(item.get("val") or item.get("value") or item.get(attr_name))
+                    dt_raw = str(item.get("date") or item.get("rq") or "").strip()
+                    val = _safe_float(item.get("zb") or item.get("val") or item.get("value"))
                     if not dt_raw or val is None:
                         continue
                     if len(dt_raw) == 8 and dt_raw.isdigit():
                         dt_str = f"{dt_raw[:4]}-{dt_raw[4:6]}-{dt_raw[6:8]}"
                     else:
                         dt_str = dt_raw[:10]
-                    series_map.setdefault(dt_str, {})[attr_name] = val
+                    entry = series_map.setdefault(dt_str, {})
+                    entry[attr_name] = val
+                    zbjz = _safe_float(item.get("zbjz"))
+                    if zbjz is not None and zbjz > 0:
+                        entry["close"] = zbjz
+                    if metric_type == "pe" and item.get("zbbfw") is not None:
+                        entry["pe_percentile_10y"] = _safe_float(item.get("zbbfw"))
             except Exception as exc:
                 logger.debug("Howbuy 历史字段 %s 获取异常 [%s]: %s", attr_name, symbol, exc)
 
         bars: List[MarketBar] = []
         for dt_str in sorted(series_map.keys()):
             vals = series_map[dt_str]
+            extra = {}
+            if "pe_percentile_10y" in vals:
+                extra["pe_percentile_10y"] = vals["pe_percentile_10y"]
+            c_val = vals.get("close")
             bars.append(
                 MarketBar(
                     symbol=symbol,
                     trade_date=dt_str,
+                    open=c_val,
+                    high=c_val,
+                    low=c_val,
+                    close=c_val,
                     pe=vals.get("pe"),
                     pb=vals.get("pb"),
                     dividend_yield=vals.get("dividend_yield"),
+                    extra_json=extra,
                 )
             )
         return bars

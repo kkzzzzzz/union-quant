@@ -64,10 +64,15 @@ def api_market_detail(
     for fid in factor_ids:
         s = db.fetch_factor_series(symbol, fid)
         if not s.empty:
-            s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"]))
+            s_aligned = s.reindex(pd.to_datetime(df_sub["trade_date"])).ffill()
             factors_data[fid] = [
                 None if pd.isna(v) else round(float(v), 3) for v in s_aligned.values
             ]
+            if fid == "pe_percentile_10y":
+                df_sub["pe_percentile_10y"] = [
+                    None if pd.isna(v) else round(float(v), 2)
+                    for v in s_aligned.values
+                ]
 
     # 最近 50 条表格明细（倒序）
     recent_df = df_sub.tail(50).iloc[::-1].copy()
@@ -402,6 +407,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <th class="py-2 px-2.5 text-right">收盘价 (close)</th>
                 <th class="py-2 px-2.5 text-right">涨跌幅%</th>
                 <th class="py-2 px-2.5 text-right">PE (市盈率)</th>
+                <th class="py-2 px-2.5 text-right">10年PE分位%</th>
                 <th class="py-2 px-2.5 text-right">PB (市净率)</th>
                 <th class="py-2 px-2.5 text-right">股息率%</th>
               </tr>
@@ -706,13 +712,28 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       }, true);
     }
 
+    const FACTOR_LABELS = {
+      pe_percentile_10y: '10年PE分位 (%)',
+      pe_percentile_5y: '5年PE分位 (%)',
+      pb_percentile_5y: '5年PB分位 (%)',
+      dy_percentile_5y: '5年股息率分位 (%)',
+      rsi_14: 'RSI(14)',
+      log_bias: '对数偏离度 (LogBias)',
+      ret_20d: '20日动量 (%)',
+      vol_30d: '30日波动率 (%)',
+      ma_60: '60日均线 (MA60)'
+    };
+
     async function loadMarketSymbol(symbol) {
       if (!symbol) return;
       const resp = await fetch('/api/market/' + encodeURIComponent(symbol));
       const data = await resp.json();
+      const latestRow = (data.recent_rows || [])[0] || {};
+      const peStr = latestRow.pe != null ? Number(latestRow.pe).toFixed(2) : '-';
+      const pePctStr = latestRow.pe_percentile_10y != null ? Number(latestRow.pe_percentile_10y).toFixed(2) + '%' : '-';
 
       document.getElementById('mkt-badge').textContent =
-        `${data.name} (${data.symbol}) | 市场: ${data.market} | 类型: ${data.asset_type} | 交易标的: ${data.trade_etf || '-'}`;
+        `${data.name} (${data.symbol}) | 最新PE: ${peStr} | 10年PE分位: ${pePctStr} | 市场: ${data.market} | 交易标的: ${data.trade_etf || '-'}`;
 
       // 价格 + PE 图
       const pDom = document.getElementById('chart-market-price');
@@ -735,7 +756,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           yAxisIndex: 1,
           data: data.pe,
           showSymbol: false,
-          lineStyle: { width: 1.5, type: 'dashed', color: '#f59e0b' }
+          lineStyle: { width: 1.8, type: 'dashed', color: '#f59e0b' }
         });
       }
       priceChart.setOption({
@@ -763,11 +784,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         xAxis: { type: 'category', data: data.dates, axisLabel: { color: '#64748b', fontSize: 10 } },
         yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 10 } },
         series: fEntries.map(([fid, vals]) => ({
-          name: fid,
+          name: FACTOR_LABELS[fid] || fid,
           type: 'line',
           data: vals,
           showSymbol: false,
-          lineStyle: { width: 1.8 }
+          lineStyle: { width: fid === 'pe_percentile_10y' ? 2.4 : 1.6 }
         }))
       }, true);
 
@@ -782,7 +803,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <td class="py-1.5 px-2.5 text-right">${r.low != null ? Number(r.low).toFixed(3) : '-'}</td>
           <td class="py-1.5 px-2.5 text-right font-bold text-white">${r.close != null ? Number(r.close).toFixed(3) : '-'}</td>
           <td class="py-1.5 px-2.5 text-right ${r.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${r.change_pct != null ? Number(r.change_pct).toFixed(2) + '%' : '-'}</td>
-          <td class="py-1.5 px-2.5 text-right text-amber-300">${r.pe != null ? Number(r.pe).toFixed(2) : '-'}</td>
+          <td class="py-1.5 px-2.5 text-right text-amber-300 font-semibold">${r.pe != null ? Number(r.pe).toFixed(2) : '-'}</td>
+          <td class="py-1.5 px-2.5 text-right text-cyan-300 font-semibold">${r.pe_percentile_10y != null ? Number(r.pe_percentile_10y).toFixed(2) + '%' : '-'}</td>
           <td class="py-1.5 px-2.5 text-right text-amber-200">${r.pb != null ? Number(r.pb).toFixed(2) : '-'}</td>
           <td class="py-1.5 px-2.5 text-right text-indigo-300">${r.dividend_yield != null ? Number(r.dividend_yield).toFixed(2) + '%' : '-'}</td>
         </tr>

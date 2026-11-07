@@ -62,7 +62,7 @@ def _rolling_percentile(
     out = valid.rolling(window=window, min_periods=eff_min).apply(
         _pct_rank, raw=True
     )
-    return out.reindex(series.index)
+    return out.reindex(series.index).ffill()
 
 
 @register_factor("pe_percentile_10y")
