@@ -362,6 +362,14 @@ class DatabaseGateway:
         if self._client is not None:
             try:
                 clean_rows = self._clean_records_for_json(rows)
+                for r in clean_rows:
+                    if r.get("extra_json") is None:
+                        r["extra_json"] = {}
+                    elif isinstance(r.get("extra_json"), str):
+                        try:
+                            r["extra_json"] = json.loads(r["extra_json"])
+                        except Exception:
+                            r["extra_json"] = {}
                 for i in range(0, len(clean_rows), chunk_size):
                     batch = clean_rows[i : i + chunk_size]
                     self._client.table("market_daily").upsert(
