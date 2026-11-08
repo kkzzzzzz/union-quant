@@ -147,3 +147,15 @@ class AppConfig:
         cfg.setdefault("version", "2.0")
         cfg.setdefault("status", "online")
         return cfg
+
+    def update_strategy_file_status(self, strategy_id: str, status: str) -> bool:
+        """同步更新策略配置 YAML 文件中的 status 字段"""
+        candidate = self.strategies_dir / f"{strategy_id}.yaml"
+        if not candidate.exists():
+            return False
+        with open(candidate, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        cfg["status"] = status
+        with open(candidate, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        return True

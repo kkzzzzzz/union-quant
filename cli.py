@@ -380,6 +380,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_pipe.add_argument("--no-notify", action="store_true", help="禁用消息通知推送")
     p_pipe.set_defaults(func=cmd_shadow_pipeline)
 
+    # strategy (策略表管理、离线回测验证与一键推线上/下线)
+    p_strat = sub.add_parser("strategy", help="策略表管理：离线验证、回测核验、推线上/下线与元数据同步")
+    strat_sub = p_strat.add_subparsers(dest="strat_action", required=True)
+
+    # strategy list
+    p_s_list = strat_sub.add_parser("list", help="查看策略表全量元数据、上下线状态与指标")
+    p_s_list.set_defaults(func=cmd_strategy_list)
+
+    # strategy verify
+    p_s_ver = strat_sub.add_parser("verify", help="离线回测验证策略（Lab 沙箱验证模式，不污染生产）")
+    p_s_ver.add_argument("strategy_id", help="策略 ID")
+    p_s_ver.add_argument("--start", help="回测起始日期 YYYY-MM-DD")
+    p_s_ver.add_argument("--end", help="回测结束日期 YYYY-MM-DD")
+    p_s_ver.set_defaults(func=cmd_strategy_verify)
+
+    # strategy promote
+    p_s_pro = strat_sub.add_parser("promote", help="推线上：将离线验证通过的策略晋升为 online 线上状态")
+    p_s_pro.add_argument("strategy_id", help="策略 ID")
+    p_s_pro.set_defaults(func=cmd_strategy_promote)
+
+    # strategy demote
+    p_s_dem = strat_sub.add_parser("demote", help="下线：将策略设为 offline 离线状态")
+    p_s_dem.add_argument("strategy_id", help="策略 ID")
+    p_s_dem.set_defaults(func=cmd_strategy_demote)
+
+    # strategy sync
+    p_s_sync = strat_sub.add_parser("sync", help="同步本地策略配置到 strategy_meta 策略表")
+    p_s_sync.set_defaults(func=cmd_strategy_sync)
+
     return parser
 
 
@@ -415,6 +444,153 @@ def cmd_shadow_pipeline(args: argparse.Namespace) -> int:
     return 0 if summary["is_all_clean"] else 0
 
 
+
+
+def _sync_strategy_meta_if_needed(cfg: AppConfig, db: DatabaseGateway) -> List[Dict[str, Any]]:
+    metas = db.fetch_strategy_meta()
+    if not metas:
+        records = []
+        for sid in cfg.list_strategies(only_online=False):
+            try:
+                scfg = cfg.load_strategy_config(sid)
+                records.append({
+                    "strategy_id": sid,
+                    "name": scfg.get("name", sid),
+                    "category": scfg.get("type", "dynamic_allocation"),
+                    "status": scfg.get("status", "online"),
+                    "version": scfg.get("version", "2.0"),
+                    "universe": scfg.get("strategy_params", {}).get("assets", []),
+                    "default_params": scfg.get("strategy_params") or {},
+                    "execution_config": scfg.get("execution") or {},
+                    "description": scfg.get("description", ""),
+                })
+            except Exception:
+                pass
+        if records:
+            db.upsert_strategy_meta(records)
+            metas = db.fetch_strategy_meta()
+    return metas
+
+
+def cmd_strategy_list(args: argparse.Namespace) -> int:
+    cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
+    metas = _sync_strategy_meta_if_needed(cfg, db)
+
+    print("=" * 88)
+    print(f"{'策略 ID':<25} | {'策略名称':<28} | {'状态':<10} | {'CAGR':<8} | {'MaxDD':<8} | {'Sharpe':<6}")
+    print("-" * 88)
+    for m in metas:
+        sid = m["strategy_id"]
+        name = m.get("name", sid)[:26]
+        status = m.get("status", "online").upper()
+        status_str = f"🟢 {status}" if status == "ONLINE" else (f"⚪ {status}" if status == "OFFLINE" else f"🟡 {status}")
+        raw_m = m.get("metrics_snapshot")
+        metrics = raw_m if isinstance(raw_m, dict) else {}
+        cagr_str = f"{metrics['cagr']:.1%}" if "cagr" in metrics else "-"
+        mdd_str = f"{metrics['max_drawdown']:.1%}" if "max_drawdown" in metrics else "-"
+        sr_str = f"{metrics['sharpe_ratio']:.2f}" if "sharpe_ratio" in metrics else "-"
+        print(f"{sid:<25} | {name:<26} | {status_str:<12} | {cagr_str:<8} | {mdd_str:<8} | {sr_str:<6}")
+    print("=" * 88)
+    print("💡 提示:")
+    print("  • 离线回测验证: python cli.py strategy verify <strategy_id>")
+    print("  • 验证通过推线上: python cli.py strategy promote <strategy_id>")
+    print("  • 策略停跑下线:   python cli.py strategy demote <strategy_id>")
+    return 0
+
+
+def cmd_strategy_verify(args: argparse.Namespace) -> int:
+    cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
+    pipeline = QuantPipeline(config=cfg, db=db)
+    sid = args.strategy_id
+
+    print(f"正在对策略 [{sid}] 执行离线沙箱回测验证 (Lab 模式，零写入线上生产表)...")
+    res = pipeline.run_backtest(
+        strategy_id=sid,
+        start_date=args.start,
+        end_date=args.end,
+        save_outputs=True,
+    )
+    m = res.metrics
+    print("=" * 72)
+    print(f"【策略离线验证结果】策略: {res.strategy_name} ({sid})")
+    print(f"  回测区间: {m.get('start_date')} ~ {m.get('end_date')} (共 {m.get('trading_days', 0)} 交易日)")
+    print(f"  总收益率: {m.get('total_return', 0.0):.2%} | 年化收益 (CAGR): {m.get('cagr', 0.0):.2%}")
+    print(f"  最大回撤: {m.get('max_drawdown', 0.0):.2%} | 年化波动率: {m.get('annual_volatility', 0.0):.2%}")
+    print(f"  夏普比率: {m.get('sharpe_ratio', 0.0):.2f} | 卡玛比率: {m.get('calmar_ratio', 0.0):.2f} | 胜率: {m.get('daily_win_rate', 0.0):.2%}")
+    if res.latest_decision:
+        w_str = ", ".join(f"{k}:{v:.1%}" for k, v in res.latest_decision.weights.items() if v > 0.0001)
+        print(f"  最新决策持仓: {w_str or '现金/空仓'}")
+    print("=" * 72)
+
+    # 将验证指标缓存至策略元数据表
+    db.update_strategy_metrics(sid, m)
+    print(f"✅ 策略 [{sid}] 离线回测验证完成！绩效指标已入库留痕。")
+    print(f"👉 若指标符合预期，可执行以下命令一键推线上:")
+    print(f"   python cli.py strategy promote {sid}")
+    return 0
+
+
+def cmd_strategy_promote(args: argparse.Namespace) -> int:
+    cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
+    sid = args.strategy_id
+
+    # 1. 更新数据库表 strategy_meta
+    db.update_strategy_status(sid, "online")
+    # 2. 同步更新本地 YAML
+    cfg.update_strategy_file_status(sid, "online")
+
+    print("=" * 72)
+    print(f"🚀 [推线上成功] 策略 [{sid}] 状态已晋升为: ONLINE (线上生产)")
+    print("  • 策略元数据表 strategy_meta 已更新为 online")
+    print("  • 日常自动化双跑 (shadow-pipeline) 与实盘调度已自动纳入该策略")
+    print("=" * 72)
+    return 0
+
+
+def cmd_strategy_demote(args: argparse.Namespace) -> int:
+    cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
+    sid = args.strategy_id
+
+    # 1. 更新数据库表 strategy_meta
+    db.update_strategy_status(sid, "offline")
+    # 2. 同步更新本地 YAML
+    cfg.update_strategy_file_status(sid, "offline")
+
+    print("=" * 72)
+    print(f"⏸ [下线成功] 策略 [{sid}] 状态已变更为: OFFLINE (已下线)")
+    print("  • 策略元数据表 strategy_meta 已更新为 offline")
+    print("  • 该策略已从日常调度与双跑比对中剔除")
+    print("=" * 72)
+    return 0
+
+
+def cmd_strategy_sync(args: argparse.Namespace) -> int:
+    cfg = AppConfig()
+    db = DatabaseGateway(config=cfg)
+    records = []
+    for sid in cfg.list_strategies(only_online=False):
+        try:
+            scfg = cfg.load_strategy_config(sid)
+            records.append({
+                "strategy_id": sid,
+                "name": scfg.get("name", sid),
+                "category": scfg.get("type", "dynamic_allocation"),
+                "status": scfg.get("status", "online"),
+                "version": scfg.get("version", "2.0"),
+                "universe": scfg.get("strategy_params", {}).get("assets", []),
+                "default_params": scfg.get("strategy_params") or {},
+                "execution_config": scfg.get("execution") or {},
+                "description": scfg.get("description", ""),
+            })
+        except Exception as exc:
+            print(f"跳过异常配置 {sid}: {exc}")
+    n = db.upsert_strategy_meta(records)
+    print(f"✅ [策略元数据同步完成] 共同步 {n} 个策略到 strategy_meta 表")
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:

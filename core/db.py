@@ -75,8 +75,9 @@ class DatabaseGateway:
             self._init_relational_tables()
         except Exception as exc:
             if self.config.supabase_url and self.config.supabase_key:
-                logger.info("数据库 TCP 直连端口受限，已平滑启用内存计算引擎 + 纯 Supabase HTTPS API 网关模式")
-                self.db_url = "sqlite:///:memory:"
+                logger.info("数据库 TCP 直连端口受限，已平滑启用本地持久网关引擎 + 纯 Supabase HTTPS API 模式")
+                local_db_path = cache_dir / "quant_gateway.db"
+                self.db_url = f"sqlite:///{local_db_path}"
                 self.engine = create_engine(self.db_url, future=True)
                 self._init_relational_tables()
             else:
@@ -193,6 +194,7 @@ class DatabaseGateway:
                 default_params TEXT NOT NULL DEFAULT '{}',
                 execution_config TEXT NOT NULL DEFAULT '{}',
                 description TEXT,
+                metrics_snapshot TEXT,
                 updated_at VARCHAR(32)
             )
             """,
@@ -800,6 +802,7 @@ class DatabaseGateway:
                         "default_params": json.dumps(r.get("default_params") or r.get("strategy_params") or {}, ensure_ascii=False),
                         "execution_config": json.dumps(r.get("execution_config") or r.get("execution") or {}, ensure_ascii=False),
                         "description": str(r.get("description", "")),
+                        "metrics_snapshot": json.dumps(r.get("metrics_snapshot") or {}, ensure_ascii=False),
                         "updated_at": now_str,
                     },
                 )
@@ -823,13 +826,45 @@ class DatabaseGateway:
             return []
         rows = df.to_dict(orient="records")
         for r in rows:
-            for k in ["universe", "default_params", "execution_config"]:
-                if isinstance(r.get(k), str):
+            for k in ["universe", "default_params", "execution_config", "metrics_snapshot"]:
+                if isinstance(r.get(k), str) and r[k]:
                     try:
                         r[k] = json.loads(r[k])
                     except Exception:
                         pass
         return rows
+
+    def update_strategy_status(self, strategy_id: str, status: str) -> bool:
+        """更新策略上下线状态 (online / offline / draft)"""
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE strategy_meta SET status = :status, updated_at = :updated_at WHERE strategy_id = :strategy_id"
+                ),
+                {"strategy_id": strategy_id, "status": status, "updated_at": now_str},
+            )
+        if self._client is not None:
+            try:
+                self._client.table("strategy_meta").update(
+                    {"status": status, "updated_at": now_str}
+                ).eq("strategy_id", strategy_id).execute()
+            except Exception as exc:
+                logger.debug("更新远端 strategy_meta 状态: %s", exc)
+        return True
+
+    def update_strategy_metrics(self, strategy_id: str, metrics: Dict[str, Any]) -> bool:
+        """更新策略在离线回测验证后的绩效指标快照"""
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        metrics_json = json.dumps(metrics, ensure_ascii=False)
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE strategy_meta SET metrics_snapshot = :metrics, updated_at = :updated_at WHERE strategy_id = :strategy_id"
+                ),
+                {"strategy_id": strategy_id, "metrics": metrics_json, "updated_at": now_str},
+            )
+        return True
 
     def record_strategy_execution(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """记录单次策略运行、白盒计算过程与最终持仓动作 (方案 B)"""
