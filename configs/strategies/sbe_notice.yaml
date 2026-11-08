@@ -2,6 +2,7 @@ strategy_id: "sbe_notice"
 name: "股债性价比(SBE)动态股债配置策略"
 type: "sbe_notice"
 version: "2.0"
+status: "online"
 description: "基于中证800股债性价比(FED模型历史分位数)计算最优股票与债券配置比例"
 
 execution:

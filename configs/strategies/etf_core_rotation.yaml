@@ -2,6 +2,7 @@ strategy_id: "etf_core_rotation"
 name: "核心四资产ETF相对动量轮动"
 type: "etf_weekly_momentum"
 version: "2.0"
+status: "offline"
 description: "沪深300ETF、国债ETF、纳指100ETF、黄金ETF四大核心资产20日纯相对动量每周五轮动"
 
 execution:

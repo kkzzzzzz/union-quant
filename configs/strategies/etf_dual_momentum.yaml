@@ -2,6 +2,7 @@ strategy_id: "etf_dual_momentum"
 name: "ETF双动量轮动策略"
 type: "etf_weekly_momentum"
 version: "2.0"
+status: "online"
 description: "黄金、纳指100、创业板、红利低波4大ETF双周周五检验20日相对动量与60日均线绝对趋势过滤，全部跌破60日线时持现避险"
 
 execution:

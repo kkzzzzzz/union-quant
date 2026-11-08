@@ -2,6 +2,7 @@ strategy_id: "size_style_rotation"
 name: "大小盘风格阈值动量轮动策略"
 type: "rotation"
 version: "2.0"
+status: "offline"
 description: "沪深300与中证1000/创业板20日动量阈值轮动，双负动量转入国债避险"
 
 execution:

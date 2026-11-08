@@ -22,9 +22,14 @@ import logging
 import os
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +64,13 @@ class PushNotifier:
             channels.append("pushplus")
         return channels
 
-    def send(self, title: str, markdown_body: str) -> Dict[str, bool]:
-        """向所有已配置的通道推送 Markdown 消息"""
+    def send(
+        self,
+        title: str,
+        markdown_body: str,
+        html_body: Optional[str] = None,
+    ) -> Dict[str, bool]:
+        """向所有已配置的通道推送消息 (Telegram 优先使用高质量 HTML 渲染)"""
         results: Dict[str, bool] = {}
         if self.dingtalk_webhook:
             results["dingtalk"] = self._send_dingtalk(title, markdown_body)
@@ -69,7 +79,9 @@ class PushNotifier:
         if self.wecom_webhook:
             results["wecom"] = self._send_wecom(title, markdown_body)
         if self.tg_bot_token and self.tg_chat_id:
-            results["telegram"] = self._send_telegram(title, markdown_body)
+            results["telegram"] = self._send_telegram(
+                title, html_body or markdown_body, is_html=bool(html_body)
+            )
         if self.serverchan_key:
             results["serverchan"] = self._send_serverchan(title, markdown_body)
         if self.pushplus_token:
@@ -139,15 +151,56 @@ class PushNotifier:
             logger.warning("WeCom 推送失败: %s", exc)
             return False
 
-    def _send_telegram(self, title: str, content: str) -> bool:
+    def _send_telegram(
+        self, title: str, content: str, is_html: bool = False
+    ) -> bool:
         url = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
-        payload = {
-            "chat_id": self.tg_chat_id,
-            "text": f"*{title}*\n\n{content}",
-        }
+
+        if is_html:
+            msg_text = f"📢 <b>{title}</b>\n\n{content}"
+            if len(msg_text) > 4000:
+                msg_text = msg_text[:3980] + "\n\n<i>(内容过长已截断，请查看完整报告)</i>"
+            payload = {
+                "chat_id": self.tg_chat_id,
+                "text": msg_text,
+                "parse_mode": "HTML",
+            }
+        else:
+            msg_text = f"📢 *{title}*\n\n{content}"
+            if len(msg_text) > 4000:
+                msg_text = msg_text[:3980] + "\n\n... (内容已截断，请查看本地完整报告)"
+            payload = {
+                "chat_id": self.tg_chat_id,
+                "text": msg_text,
+                "parse_mode": "Markdown",
+            }
+
         try:
             resp = requests.post(url, json=payload, timeout=self.timeout)
-            return resp.status_code == 200
+            if resp.status_code == 200:
+                return True
+            logger.warning(
+                "Telegram 解析模式发送失败 (HTTP %s: %s)，自动降级为纯文本直发",
+                resp.status_code,
+                resp.text,
+            )
+            # 若解析模式失败，自动剥除标签降级为纯文本直发
+            import re
+
+            plain_content = (
+                re.sub(r"<[^>]+>", "", content) if is_html else content
+            )
+            plain_text = f"📢 {title}\n\n{plain_content}"
+            if len(plain_text) > 4000:
+                plain_text = (
+                    plain_text[:3980] + "\n\n... (内容已截断，请查看本地完整报告)"
+                )
+            payload_plain = {
+                "chat_id": self.tg_chat_id,
+                "text": plain_text,
+            }
+            resp2 = requests.post(url, json=payload_plain, timeout=self.timeout)
+            return resp2.status_code == 200
         except Exception as exc:
             logger.warning("Telegram 推送失败: %s", exc)
             return False

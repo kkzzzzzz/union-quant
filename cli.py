@@ -356,7 +356,6 @@ def build_parser() -> argparse.ArgumentParser:
     # serve
     p_srv = sub.add_parser("serve", help="启动 Web 可视化核验看板")
     p_srv.add_argument("--host", default="127.0.0.1", help="监听地址")
-    p_srv.add_argument("--port", type=int, default=8088, help="监听端口")
     p_srv.set_defaults(func=cmd_serve)
 
     # export-pages
@@ -368,7 +367,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_exp.add_argument("--out-dir", default="site", help="静态站点输出目录")
     p_exp.set_defaults(func=cmd_export_pages)
 
+    # compare (新老系统双跑比对稽核)
+    p_cmp = sub.add_parser("compare", aliases=["reconcile"], help="新老系统影子双跑并排比对与稽核报告")
+    p_cmp.add_argument("--date", help="指定比对日期 YYYY-MM-DD (默认最新)")
+    p_cmp.add_argument("--tolerance", type=float, default=0.001, help="允许的权重偏差容差 (默认 0.001 即 0.1%)")
+    p_cmp.add_argument("--notify", action="store_true", help="发送比对报告通知至已配置的钉钉/飞书/微信等通道")
+    p_cmp.set_defaults(func=cmd_compare)
+
+    # shadow-pipeline (一键执行全套影子流程：拉数据 -> 算因子 -> 算影子策略 -> 推送 Diff 结果)
+    p_pipe = sub.add_parser("shadow-pipeline", help="全套自动化双跑：自动拉行情估值、算因子、算影子策略并推送 Diff 报告")
+    p_pipe.add_argument("--mode", choices=["daily", "catchup"], default="daily", help="数据同步模式: daily=日常增量, catchup=晚间估值追赶")
+    p_pipe.add_argument("--no-notify", action="store_true", help="禁用消息通知推送")
+    p_pipe.set_defaults(func=cmd_shadow_pipeline)
+
     return parser
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    from core.reconcile import ReconciliationService
+
+    svc = ReconciliationService()
+    summary = svc.compare(
+        target_date=args.date,
+        tolerance=args.tolerance,
+        notify=args.notify,
+    )
+    print("=" * 72)
+    print(summary["markdown_report"])
+    print("=" * 72)
+    print(f"[比对报告已导出至] {summary['report_path']}")
+    return 0 if summary["is_all_clean"] else 0
+
+
+def cmd_shadow_pipeline(args: argparse.Namespace) -> int:
+    from core.reconcile import ReconciliationService
+
+    svc = ReconciliationService()
+    summary = svc.run_daily_shadow_pipeline(
+        sync_mode=args.mode,
+        compute_factors=True,
+        notify=not args.no_notify,
+    )
+    print("=" * 72)
+    print(summary["markdown_report"])
+    print("=" * 72)
+    print(f"[双跑自动化流程执行完成，Diff 报告已导出至] {summary['report_path']}")
+    return 0 if summary["is_all_clean"] else 0
+
+
 
 
 def main(argv: Optional[List[str]] = None) -> int:

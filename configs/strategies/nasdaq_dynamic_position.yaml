@@ -2,6 +2,7 @@ strategy_id: "nasdaq_dynamic_position"
 name: "纳指100动态仓位调度策略 (Trial 039)"
 type: "dynamic_engine"
 version: "2.0"
+status: "offline"
 description: "以纳指100为核心(base=0.52, c1=1.5)的9资产PE分位动态配置 + RSI/LogBias双因子极值触发调仓"
 
 execution:

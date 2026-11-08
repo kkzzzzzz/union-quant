@@ -22,6 +22,9 @@ venv/
 .chrome_profile*/
 **/node_modules/
 **/.next/
+.agents/
+skills-lock.json
+
 
 # 历史子工程（保持独立，不嵌套提交）
 index_fetcher/

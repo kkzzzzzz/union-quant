@@ -102,8 +102,10 @@ def test_config_and_factor_registry(temp_env):
     assert "000300.SH" in assets
     assert "CBA02701.CS" in assets
 
-    strategies = cfg.list_strategies()
-    assert len(strategies) >= 6
+    online_strategies = cfg.list_strategies(only_online=True)
+    all_strategies = cfg.list_strategies(only_online=False)
+    assert len(online_strategies) == 3
+    assert len(all_strategies) >= 6
 
     factor_svc = FactorService(db=db, config=cfg)
     df_hs300 = db.fetch_market_daily("000300.SH")

@@ -2,6 +2,7 @@ strategy_id: "global_asset_allocation"
 name: "全球大类资产PE动态配置策略 (Trial 040 / PE_best)"
 type: "dynamic_engine"
 version: "2.0"
+status: "online"
 description: "基于10年PE分位数的9资产优先级动态配置（标普500+纳指100+恒生科技+沪深300+中证500+中证1000+红利低波+黄金+7-10年政金债兜底）"
 
 execution:

@@ -64,18 +64,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 4. Sync Daily Market & Valuation Data + Compute Factors
+      - name: 4. Run Full Daily Shadow Pipeline (Sync Data -> Factors -> Shadow Strategy -> Diff Report & Notify)
         run: |
           MODE="${{ github.event.inputs.sync_mode || 'daily' }}"
-          python cli.py sync --mode "$MODE" --compute-factors --factor-tail 90 --notify
-
-      - name: 5. Compute Daily Strategy Signals (T+1) & Push Notification
-        run: |
           if [ "${{ github.event.inputs.send_notify }}" = "false" ]; then
-            python cli.py signal --all --mode live --no-notify
+            python cli.py shadow-pipeline --mode "$MODE" --no-notify
           else
-            python cli.py signal --all --mode live
+            python cli.py shadow-pipeline --mode "$MODE"
           fi
+
 
       - name: 6. Build Static Vercel Dashboard (site/)
         run: |

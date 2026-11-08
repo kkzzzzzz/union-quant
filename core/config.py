@@ -43,13 +43,44 @@ class AppConfig:
     def __init__(self, config_dir: Path = CONFIG_DIR) -> None:
         self.config_dir = config_dir
         self.strategies_dir = config_dir / "strategies"
-        self.database_url = os.getenv("DATABASE_URL", "").strip()
+        self.database_url = self._resolve_database_url()
         self.supabase_url = os.getenv("SUPABASE_URL", "").strip()
         self.supabase_key = (
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
             or os.getenv("SUPABASE_KEY", "").strip()
         )
         self._assets_cache: Optional[Dict[str, AssetConfig]] = None
+
+    def _resolve_database_url(self) -> str:
+        """解析关系型数据库连接串 (支持 DATABASE_URL 或独立 DB_* 环境变量配置)"""
+        url = os.getenv("DATABASE_URL", "").strip() or os.getenv("DB_URL", "").strip()
+        if not url:
+            host = os.getenv("DB_HOST", "").strip()
+            if host:
+                db_type = os.getenv("DB_TYPE", "postgresql").strip().lower()
+                user = os.getenv("DB_USER", "").strip()
+                password = os.getenv("DB_PASSWORD", "").strip()
+                port = os.getenv("DB_PORT", "").strip()
+                name = os.getenv("DB_NAME", "").strip() or "union_quant"
+
+                auth = f"{user}:{password}@" if user or password else ""
+                port_str = f":{port}" if port else ""
+                if db_type in ("postgres", "postgresql"):
+                    driver = "postgresql+psycopg2"
+                    default_port = port_str or ":5432"
+                    url = f"{driver}://{auth}{host}{default_port}/{name}"
+                elif db_type in ("mysql", "mariadb"):
+                    driver = "mysql+pymysql"
+                    default_port = port_str or ":3306"
+                    url = f"{driver}://{auth}{host}{default_port}/{name}"
+                else:
+                    url = f"{db_type}://{auth}{host}{port_str}/{name}"
+
+        # 规范化 postgres:// 为 postgresql://
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://") :]
+        return url
+
 
     def load_assets(self, force_reload: bool = False) -> Dict[str, AssetConfig]:
         """加载 `configs/assets.yaml` 中的所有标的定义"""
@@ -83,13 +114,21 @@ class AppConfig:
     def get_asset(self, symbol: str) -> Optional[AssetConfig]:
         return self.load_assets().get(symbol)
 
-    def list_strategies(self) -> List[str]:
-        """列出所有可用的策略 ID"""
+    def list_strategies(self, only_online: bool = True) -> List[str]:
+        """列出策略 ID (默认仅返回 status 为 online 的已上线策略)"""
         if not self.strategies_dir.exists():
             return []
         ids: List[str] = []
         for p in sorted(self.strategies_dir.glob("*.yaml")):
-            ids.append(p.stem)
+            sid = p.stem
+            if only_online:
+                try:
+                    scfg = self.load_strategy_config(sid)
+                    if str(scfg.get("status", "online")).lower() != "online":
+                        continue
+                except Exception:
+                    pass
+            ids.append(sid)
         return ids
 
     def load_strategy_config(self, strategy_id_or_path: str) -> Dict[str, Any]:
@@ -106,4 +145,5 @@ class AppConfig:
         cfg.setdefault("strategy_id", candidate.stem)
         cfg.setdefault("name", cfg["strategy_id"])
         cfg.setdefault("version", "2.0")
+        cfg.setdefault("status", "online")
         return cfg
