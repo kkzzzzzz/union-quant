@@ -2,71 +2,86 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Union Quant — 统一量化资产与策略看板</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0b1120; color: #e2e8f0; }
+    :root {
+      --sat: env(safe-area-inset-top);
+      --sab: env(safe-area-inset-bottom);
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #0b1120;
+      color: #e2e8f0;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
     .card { background: #131c31; border: 1px solid #1e293b; border-radius: 0.75rem; }
-    .card-hover:hover { border-color: #3b82f6; transform: translateY(-2px); transition: all 0.2s ease; }
-    .tab-btn.active { background: #2563eb; color: #fff; border-color: #3b82f6; box-shadow: 0 0 12px rgba(37,99,235,0.35); }
+    .card-hover:active, .card-hover:hover { border-color: #3b82f6; }
+    .tab-btn.active { background: #2563eb; color: #fff; border-color: #3b82f6; box-shadow: 0 0 10px rgba(37,99,235,0.35); }
     .sub-filter-btn.active { background: #1e293b; color: #60a5fa; border-color: #3b82f6; font-weight: 600; }
     .strat-btn.active { background: #1d4ed8; border-color: #60a5fa; color: #fff; }
-    .chip-btn.active { background: #2563eb; color: #fff; border-color: #60a5fa; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .chip-btn.active { background: #2563eb; color: #fff; border-color: #60a5fa; font-weight: 600; }
+    
+    /* 移动端底部导航高亮 */
+    .mob-tab-btn.active { color: #38bdf8; font-weight: 700; }
+    .mob-tab-btn.active .mob-tab-icon { transform: scale(1.1); filter: drop-shadow(0 0 6px rgba(56,189,248,0.5)); }
+
+    /* 隐藏滚动条但保留平滑触摸滚动 */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
   </style>
 </head>
-<body class="min-h-screen flex flex-col antialiased">
-  <!-- 顶部导航栏 -->
-  <header class="border-b border-slate-800/90 bg-slate-900/95 sticky top-0 z-40 backdrop-blur">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-black text-xl text-white shadow-lg shadow-blue-500/25">UQ</div>
-        <div>
-          <h1 class="text-base font-bold text-white flex items-center gap-2">
-            Union Quant 量化资产看板
-            <span class="text-xs font-normal px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Vercel 自动化部署</span>
-          </h1>
-          <p id="gen-time-banner" class="text-xs text-slate-400 font-mono flex items-center gap-2 mt-0.5">
-            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            正在加载最新快照...
+<body class="min-h-screen flex flex-col antialiased bg-[#0b1120] text-slate-200">
+
+  <!-- 顶部轻量移动端优先导航条 (Sticky Top Header) -->
+  <header class="border-b border-slate-800/90 bg-slate-900/95 sticky top-0 z-40 backdrop-blur-md pt-[calc(0.25rem+var(--sat))]">
+    <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-between gap-2">
+      <!-- Logo + 标题 -->
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-black text-sm text-white shadow-md shadow-blue-500/25 shrink-0">UQ</div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <h1 class="text-sm font-bold text-white truncate">Union Quant</h1>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">Vercel</span>
+          </div>
+          <p id="gen-time-banner" class="text-[10px] text-slate-400 font-mono truncate flex items-center gap-1 mt-0.5">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+            加载中...
           </p>
         </div>
       </div>
 
-      <!-- 右侧控制区与主导航 -->
-      <div class="flex flex-wrap items-center gap-2.5">
-        <!-- 涨跌配色模式切换 -->
-        <button onclick="toggleColorMode()" id="btn-color-mode" title="点击切换涨跌颜色习惯" class="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition flex items-center gap-1.5">
-          <span>🎨 配色:</span>
-          <span id="label-color-mode" class="font-bold text-rose-400">红涨绿跌 (CN)</span>
+      <!-- 右侧控制区: 涨跌配色切换 + 桌面端 Tab 导航 -->
+      <div class="flex items-center gap-2 shrink-0">
+        <!-- 涨跌配色模式一键切换 -->
+        <button onclick="toggleColorMode()" id="btn-color-mode" title="点击切换涨跌颜色" class="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-700 bg-slate-800/90 text-slate-300 active:scale-95 transition flex items-center gap-1">
+          <span class="hidden xs:inline">配色:</span>
+          <span id="label-color-mode" class="font-bold text-rose-400">红涨(CN)</span>
         </button>
 
-        <div class="h-5 w-px bg-slate-800 hidden sm:block"></div>
-
-        <!-- 四个核心标签页导航 -->
-        <div class="flex items-center bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
-          <button onclick="switchTab('strategies')" id="tab-strategies" class="tab-btn active px-3 py-1.5 rounded-lg text-xs font-medium border border-transparent transition flex items-center gap-1.5">
-            <span>📊</span>
-            <span>策略信号</span>
+        <!-- 桌面端宽屏顶部导航 (md以上显示，手机端由吸底导航接管) -->
+        <div class="hidden md:flex items-center bg-slate-950/60 p-0.5 rounded-xl border border-slate-800">
+          <button onclick="switchTab('strategies')" id="tab-strategies" class="tab-btn active px-2.5 py-1 rounded-lg text-xs font-medium border border-transparent transition flex items-center gap-1">
+            <span>📊 策略信号</span>
             <span id="tab-strat-count" class="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300">3</span>
           </button>
-          <button onclick="switchTab('indices')" id="tab-indices" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-transparent text-slate-300 hover:text-white transition flex items-center gap-1.5">
-            <span>📈</span>
-            <span>指数估值中心</span>
+          <button onclick="switchTab('indices')" id="tab-indices" class="tab-btn px-2.5 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-300 transition flex items-center gap-1">
+            <span>📈 指数估值</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300">10</span>
           </button>
-          <button onclick="switchTab('etfs')" id="tab-etfs" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-transparent text-slate-300 hover:text-white transition flex items-center gap-1.5">
-            <span>⚡</span>
-            <span>ETF 动量看板</span>
+          <button onclick="switchTab('etfs')" id="tab-etfs" class="tab-btn px-2.5 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-300 transition flex items-center gap-1">
+            <span>⚡ ETF动量</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300">9</span>
           </button>
-          <button onclick="switchTab('overview')" id="tab-overview" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-transparent text-slate-300 hover:text-white transition flex items-center gap-1.5">
-            <span>🔍</span>
-            <span>资产全景</span>
+          <button onclick="switchTab('overview')" id="tab-overview" class="tab-btn px-2.5 py-1 rounded-lg text-xs font-medium border border-transparent text-slate-300 transition flex items-center gap-1">
+            <span>🔍 资产全景</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400">24</span>
           </button>
         </div>
@@ -74,248 +89,242 @@
     </div>
   </header>
 
-  <!-- 主内容区 -->
-  <main class="max-w-7xl mx-auto w-full px-4 py-4 flex-1 space-y-4">
+  <!-- 主内容区 (底部留足 5.5rem 间距避免被手机底栏遮挡) -->
+  <main class="max-w-7xl mx-auto w-full px-2.5 sm:px-4 py-3 flex-1 space-y-3 pb-[calc(5.5rem+var(--sab))]">
 
     <!-- ================================================================= -->
-    <!-- TAB 1: 每日策略信号 (Strategies) -->
+    <!-- TAB 1: 每日策略信号 (Strategies) - 手机端优先重构 -->
     <!-- ================================================================= -->
-    <div id="view-strategies" class="space-y-4">
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <!-- 左侧策略列表 -->
-        <div class="lg:col-span-3 card p-3 space-y-2">
-          <div class="flex items-center justify-between px-1 mb-1">
-            <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-              线上策略组合
-            </span>
-            <span id="st-online-count" class="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">3个线上实盘</span>
+    <div id="view-strategies" class="space-y-3">
+      <!-- 策略横向滑动选择栏 (手机端大拇指滑动切换，彻底告别侧边栏挤压) -->
+      <div class="card p-2.5 space-y-2">
+        <div class="flex items-center justify-between px-1">
+          <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            线上实盘策略
+          </span>
+          <span id="st-online-count" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">3个线上实盘</span>
+        </div>
+        <!-- 横向滚动策略胶囊 -->
+        <div id="strategy-list" class="flex gap-2 overflow-x-auto no-scrollbar py-0.5"></div>
+      </div>
+
+      <!-- 选中策略详情卡片 -->
+      <div class="card p-3 sm:p-4 space-y-3">
+        <!-- 头部: 策略名称与今日调仓状态 -->
+        <div class="flex flex-wrap items-start justify-between gap-2 border-b border-slate-700/80 pb-2.5">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 id="st-title" class="text-base sm:text-lg font-bold text-white">-</h2>
+              <span id="st-rebalance-badge" class="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0">-</span>
+            </div>
+            <p id="st-trigger-reason" class="text-xs text-slate-300 mt-1 leading-relaxed">-</p>
           </div>
-          <div id="strategy-list" class="space-y-1.5"></div>
+
+          <!-- 手机端 3 列紧凑状态条 -->
+          <div class="grid grid-cols-3 gap-1.5 w-full sm:w-auto text-xs bg-slate-900/90 p-2 rounded-xl border border-slate-800 text-center">
+            <div class="px-1">
+              <div class="text-[10px] text-slate-400">信号日(T)</div>
+              <div id="st-signal-date" class="font-mono font-bold text-emerald-400 mt-0.5 text-xs">-</div>
+            </div>
+            <div class="border-x border-slate-800 px-1">
+              <div class="text-[10px] text-slate-400">执行日(T+1)</div>
+              <div id="st-exec-date" class="font-mono font-bold text-blue-400 mt-0.5 text-xs">-</div>
+            </div>
+            <div class="px-1">
+              <div class="text-[10px] text-slate-400">现金比例</div>
+              <div id="st-cash-weight" class="font-mono font-bold text-amber-300 mt-0.5 text-xs">-</div>
+            </div>
+          </div>
         </div>
 
-        <!-- 右侧策略明细 -->
-        <div class="lg:col-span-9 space-y-4">
-          <!-- 策略最新信号摘要卡片 -->
-          <div class="card p-4 space-y-3">
-            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-700/80 pb-3">
-              <div>
-                <div class="flex items-center gap-2.5">
-                  <h2 id="st-title" class="text-lg font-bold text-white">-</h2>
-                  <span id="st-rebalance-badge" class="text-xs px-2.5 py-0.5 rounded-full font-medium">-</span>
-                </div>
-                <p id="st-trigger-reason" class="text-xs text-slate-300 mt-1.5 leading-relaxed">-</p>
-              </div>
-              <div class="flex items-center gap-3 text-xs bg-slate-900/90 px-3.5 py-2.5 rounded-xl border border-slate-800 shadow-inner">
-                <div>
-                  <span class="text-slate-400">信号日 (T):</span>
-                  <span id="st-signal-date" class="font-mono font-bold text-emerald-400 ml-1">-</span>
-                </div>
-                <div class="w-px h-4 bg-slate-800"></div>
-                <div>
-                  <span class="text-slate-400">执行日 (T+1):</span>
-                  <span id="st-exec-date" class="font-mono font-bold text-blue-400 ml-1">-</span>
-                </div>
-                <div class="w-px h-4 bg-slate-800"></div>
-                <div>
-                  <span class="text-slate-400">现金权重:</span>
-                  <span id="st-cash-weight" class="font-mono font-bold text-amber-300 ml-1">-</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 目标持仓与单资产因子推导明细 -->
-            <div>
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-slate-300">目标持仓与因子诊断明细</span>
-                <span class="text-[11px] text-slate-400">严格 T+1 交易规则，收盘后物理截断</span>
-              </div>
-              <div class="overflow-x-auto rounded-lg border border-slate-800">
-                <table class="w-full text-xs text-left border-collapse">
-                  <thead>
-                    <tr class="border-b border-slate-700/80 text-slate-400 bg-slate-800/60">
-                      <th class="py-2.5 px-3">标的代码</th>
-                      <th class="py-2.5 px-3">标的名称</th>
-                      <th class="py-2.5 px-3">交易ETF</th>
-                      <th class="py-2.5 px-3">角色 / 公式</th>
-                      <th class="py-2.5 px-3">数据日</th>
-                      <th class="py-2.5 px-3 text-right">最新收盘价</th>
-                      <th class="py-2.5 px-3 text-right">PE / 均线</th>
-                      <th class="py-2.5 px-3">核心因子 / 动量</th>
-                      <th class="py-2.5 px-3 w-40">目标配置权重</th>
-                      <th class="py-2.5 px-3">计算推导与过程核验</th>
-                    </tr>
-                  </thead>
-                  <tbody id="st-asset-details-body" class="divide-y divide-slate-800"></tbody>
-                </table>
-              </div>
-            </div>
+        <!-- 目标持仓与单资产因子推导明细 (带手机横向触摸滚动提示) -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5 px-0.5">
+            <span class="text-xs font-semibold text-slate-300">目标持仓与因子诊断明细</span>
+            <span class="text-[10px] text-slate-400 font-mono">⇄ 横向滑动查看推导</span>
           </div>
-
-          <!-- 绩效指标卡片网格 -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5" id="st-metrics-grid"></div>
-
-          <!-- 净值回测曲线 -->
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">T+1 历史回测净值与水下回撤曲线</span>
-              <span class="text-[11px] text-slate-400">含印花税与佣金滑点测算</span>
-            </div>
-            <div id="chart-strategy-nav" style="width: 100%; height: 340px;"></div>
+          <div class="overflow-x-auto no-scrollbar rounded-lg border border-slate-800">
+            <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr class="border-b border-slate-700/80 text-slate-400 bg-slate-800/70">
+                  <th class="py-2 px-2.5">标的代码</th>
+                  <th class="py-2 px-2.5">标的名称</th>
+                  <th class="py-2 px-2.5">交易ETF</th>
+                  <th class="py-2 px-2.5 text-right">最新价</th>
+                  <th class="py-2 px-2.5 w-36">目标配置权重</th>
+                  <th class="py-2 px-2.5 text-right">PE/均线</th>
+                  <th class="py-2 px-2.5">核心因子/动量</th>
+                  <th class="py-2 px-2.5">角色</th>
+                  <th class="py-2 px-2.5">计算过程核验</th>
+                </tr>
+              </thead>
+              <tbody id="st-asset-details-body" class="divide-y divide-slate-800 font-mono"></tbody>
+            </table>
           </div>
+        </div>
+      </div>
 
-          <!-- 历史调仓记录 -->
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">最近历史调仓记录 (T 日信号 -> T+1 日执行)</span>
-              <span class="text-[11px] text-slate-400">最近 50 次调仓明细</span>
-            </div>
-            <div class="overflow-x-auto max-h-64 rounded-lg border border-slate-800">
-              <table class="w-full text-xs text-left border-collapse">
-                <thead class="sticky top-0 bg-slate-800 text-slate-400 shadow">
-                  <tr>
-                    <th class="py-2 px-3">信号日期 (T)</th>
-                    <th class="py-2 px-3">执行日期 (T+1)</th>
-                    <th class="py-2 px-3">触发原因</th>
-                    <th class="py-2 px-3 text-right">单边换手率</th>
-                    <th class="py-2 px-3">执行后目标权重分布</th>
-                  </tr>
-                </thead>
-                <tbody id="st-rebalance-body" class="divide-y divide-slate-800"></tbody>
-              </table>
-            </div>
-          </div>
+      <!-- 绩效指标卡片网格: 手机端 2 列，平板 4 列，桌面 8 列 -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="st-metrics-grid"></div>
+
+      <!-- 净值回测曲线 -->
+      <div class="card p-3 sm:p-4 space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-300">T+1 回测净值与回撤曲线</span>
+          <span class="text-[10px] text-slate-400">单指长按查看明细</span>
+        </div>
+        <div id="chart-strategy-nav" style="width: 100%; height: 260px;"></div>
+      </div>
+
+      <!-- 历史调仓记录 -->
+      <div class="card p-3 sm:p-4 space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-300">历史调仓记录</span>
+          <span class="text-[10px] text-slate-400">近 50 次调仓</span>
+        </div>
+        <div class="overflow-x-auto no-scrollbar max-h-56 rounded-lg border border-slate-800">
+          <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
+            <thead class="sticky top-0 bg-slate-800 text-slate-400 shadow">
+              <tr>
+                <th class="py-1.5 px-2.5">信号日 (T)</th>
+                <th class="py-1.5 px-2.5">执行日 (T+1)</th>
+                <th class="py-1.5 px-2.5">触发原因</th>
+                <th class="py-1.5 px-2.5 text-right">换手率</th>
+                <th class="py-1.5 px-2.5">调仓后权重</th>
+              </tr>
+            </thead>
+            <tbody id="st-rebalance-body" class="divide-y divide-slate-800"></tbody>
+          </table>
         </div>
       </div>
     </div>
 
     <!-- ================================================================= -->
-    <!-- TAB 2: 指数估值中心 (Indices Valuation Hub) - 重点核心 -->
+    <!-- TAB 2: 指数估值中心 (Indices Valuation Hub) - 手机端优先重构 -->
     <!-- ================================================================= -->
-    <div id="view-indices" class="hidden space-y-4">
-      <!-- 顶部板块分类与统计栏 -->
-      <div class="card p-3.5 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-semibold text-slate-400">板块分类:</span>
-          <div class="flex flex-wrap items-center gap-1.5" id="index-category-filters">
-            <button onclick="filterIndexCards('all')" id="btn-idx-cat-all" class="sub-filter-btn active px-3 py-1 rounded-lg text-xs border border-slate-700 transition">
-              全部核心指数 (10)
-            </button>
-            <button onclick="filterIndexCards('cn_broad')" id="btn-idx-cat-cn_broad" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              A股宽基 (5)
-            </button>
-            <button onclick="filterIndexCards('cn_dividend')" id="btn-idx-cat-cn_dividend" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              高股息红利 (2)
-            </button>
-            <button onclick="filterIndexCards('overseas')" id="btn-idx-cat-overseas" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              海外与港股 (3)
-            </button>
-          </div>
+    <div id="view-indices" class="hidden space-y-3">
+      <!-- 顶部板块分类滑动胶囊 -->
+      <div class="card p-2.5 space-y-2">
+        <div class="flex items-center justify-between px-0.5">
+          <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+            <span>📈</span> 指数估值罗盘
+          </span>
+          <span class="text-[10px] text-slate-400">点击卡片直达走势</span>
         </div>
-
-        <div class="text-xs text-slate-400 flex items-center gap-3">
-          <span>估值区间分级:</span>
-          <span class="inline-flex items-center gap-1 text-[11px] text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>极低估(&lt;20%)</span>
-          <span class="inline-flex items-center gap-1 text-[11px] text-teal-300"><span class="w-2 h-2 rounded-full bg-teal-400"></span>适中低估(20-40%)</span>
-          <span class="inline-flex items-center gap-1 text-[11px] text-amber-300"><span class="w-2 h-2 rounded-full bg-amber-400"></span>合理(40-70%)</span>
-          <span class="inline-flex items-center gap-1 text-[11px] text-rose-400"><span class="w-2 h-2 rounded-full bg-rose-400"></span>偏高(&gt;70%)</span>
+        <!-- 横向滚动分类按钮 -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" id="index-category-filters">
+          <button onclick="filterIndexCards('all')" id="btn-idx-cat-all" class="sub-filter-btn active px-3 py-1 rounded-lg text-xs border border-slate-700 shrink-0 transition">
+            全部核心 (10)
+          </button>
+          <button onclick="filterIndexCards('cn_broad')" id="btn-idx-cat-cn_broad" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            A股宽基 (5)
+          </button>
+          <button onclick="filterIndexCards('cn_dividend')" id="btn-idx-cat-cn_dividend" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            高股息红利 (2)
+          </button>
+          <button onclick="filterIndexCards('overseas')" id="btn-idx-cat-overseas" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            海外及港股 (3)
+          </button>
         </div>
       </div>
 
-      <!-- 核心指数估值罗盘卡片网格 -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3" id="index-cards-grid">
-        <!-- 动态注入指数卡片 -->
-      </div>
+      <!-- 核心指数估值卡片网格: 手机 1 列，中屏 2 列，大屏 3/5 列 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5" id="index-cards-grid"></div>
 
       <!-- 指数全景估值矩阵表 -->
-      <div class="card p-4 space-y-3">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 class="text-sm font-bold text-white flex items-center gap-2">
-              <span>📋 核心指数估值与多因子矩阵</span>
-              <span class="text-xs font-normal text-slate-400">涵盖市盈率、市净率、股息率与动量偏离</span>
+      <div class="card p-3 sm:p-4 space-y-2.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+              <span>📋</span> 指数估值与多因子全景
             </h3>
+            <span class="text-[10px] text-slate-400 sm:hidden">⇄ 横滑看全列</span>
           </div>
-          <div class="flex items-center gap-2">
-            <input type="text" id="idx-search-input" oninput="renderIndexMatrix()" placeholder="搜索指数名称或代码..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-48" />
-            <select id="idx-sort-select" onchange="renderIndexMatrix()" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
-              <option value="pe_pct_asc">按 PE 10年分位: 从低到高 (估值机会)</option>
-              <option value="pe_pct_desc">按 PE 10年分位: 从高到低</option>
-              <option value="chg_1d_desc">按 今日涨跌幅: 从高到低</option>
-              <option value="dy_desc">按 股息率: 从高到低</option>
+          <!-- 搜索与排序 -->
+          <div class="flex items-center gap-1.5">
+            <input type="text" id="idx-search-input" oninput="renderIndexMatrix()" placeholder="搜索指数..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 flex-1 sm:w-36" />
+            <select id="idx-sort-select" onchange="renderIndexMatrix()" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+              <option value="pe_pct_asc">PE分位: 低到高</option>
+              <option value="pe_pct_desc">PE分位: 高到低</option>
+              <option value="chg_1d_desc">今日涨幅: 高到低</option>
+              <option value="dy_desc">股息率: 高到低</option>
             </select>
           </div>
         </div>
 
-        <div class="overflow-x-auto rounded-lg border border-slate-800">
-          <table class="w-full text-xs text-left border-collapse">
+        <div class="overflow-x-auto no-scrollbar rounded-lg border border-slate-800">
+          <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr class="border-b border-slate-700/80 bg-slate-800/60 text-slate-400">
-                <th class="py-2.5 px-3">指数代码</th>
-                <th class="py-2.5 px-3">指数名称</th>
-                <th class="py-2.5 px-3">市场</th>
-                <th class="py-2.5 px-3">关联交易ETF</th>
-                <th class="py-2.5 px-3 text-right">最新点位</th>
-                <th class="py-2.5 px-3 text-right">今日涨跌幅</th>
-                <th class="py-2.5 px-3 text-right">近5日(1W)</th>
-                <th class="py-2.5 px-3 text-right">20日动量</th>
-                <th class="py-2.5 px-3 text-right">最新 PE</th>
-                <th class="py-2.5 px-3 w-44">PE 历史分位</th>
-                <th class="py-2.5 px-3 text-right">PB / 分位</th>
-                <th class="py-2.5 px-3 text-right">股息率</th>
-                <th class="py-2.5 px-3 text-center">估值评级</th>
-                <th class="py-2.5 px-3 text-center">操作</th>
+              <tr class="border-b border-slate-700/80 bg-slate-800/70 text-slate-400">
+                <th class="py-2 px-2.5">代码</th>
+                <th class="py-2 px-2.5">名称</th>
+                <th class="py-2 px-2.5">市场</th>
+                <th class="py-2 px-2.5">交易ETF</th>
+                <th class="py-2 px-2.5 text-right">最新点位</th>
+                <th class="py-2 px-2.5 text-right">今日涨跌</th>
+                <th class="py-2 px-2.5 text-right">近5日</th>
+                <th class="py-2 px-2.5 text-right">20日动量</th>
+                <th class="py-2 px-2.5 text-right">PE(TTM)</th>
+                <th class="py-2 px-2.5 w-36">10年PE分位</th>
+                <th class="py-2 px-2.5 text-right">PB</th>
+                <th class="py-2 px-2.5 text-right">股息率</th>
+                <th class="py-2 px-2.5 text-center">评级</th>
+                <th class="py-2 px-2.5 text-center">操作</th>
               </tr>
             </thead>
-            <tbody id="idx-matrix-body" class="divide-y divide-slate-800"></tbody>
+            <tbody id="idx-matrix-body" class="divide-y divide-slate-800 font-mono"></tbody>
           </table>
         </div>
       </div>
 
-      <!-- 指数深度走势与因子核验区 -->
-      <div class="card p-4 space-y-4" id="section-index-deepdive">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-          <div class="flex items-center gap-3">
-            <span class="text-xs font-bold text-slate-300">深度透视标的:</span>
-            <!-- 芯片切换器 -->
-            <div class="flex flex-wrap items-center gap-1.5" id="idx-chips-container"></div>
+      <!-- 指数深度走势透视区 -->
+      <div class="card p-3 sm:p-4 space-y-3" id="section-index-deepdive">
+        <!-- 快速选择芯片: 横向滑动 -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-300">快速切换透视指数:</span>
+            <span class="text-[10px] text-slate-400 font-mono">左右滑动选择</span>
           </div>
-          <div id="idx-badge-stats" class="text-xs font-mono text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800"></div>
+          <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" id="idx-chips-container"></div>
         </div>
 
-        <!-- 价格走势与估值图 -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">近 250 交易日收盘价与 PE 估值双轴联动</span>
-              <span class="text-[11px] text-slate-400">实线: 点位 | 虚线: PE 估值</span>
+        <!-- 标的统计横幅 -->
+        <div id="idx-badge-stats" class="text-xs text-slate-300 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 flex flex-wrap items-center gap-2"></div>
+
+        <!-- 图表网格 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-slate-300">收盘价与 PE 双轴联动</span>
+              <span class="text-[10px] text-slate-400">实线: 点位 | 虚线: PE</span>
             </div>
-            <div id="chart-index-price" style="width: 100%; height: 320px;"></div>
+            <div id="chart-index-price" style="width: 100%; height: 250px;"></div>
           </div>
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">向量化多因子与分位走势</span>
-              <span class="text-[11px] text-slate-400">10年PE分位 / PB分位 / RSI(14)</span>
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-slate-300">多因子走势 (PE分位/PB/RSI)</span>
+              <span class="text-[10px] text-slate-400">历史分位跟踪</span>
             </div>
-            <div id="chart-index-factors" style="width: 100%; height: 320px;"></div>
+            <div id="chart-index-factors" style="width: 100%; height: 250px;"></div>
           </div>
         </div>
 
-        <!-- 最近 30 交易日历史逐日明细 -->
+        <!-- 最近 30 交易日明细 -->
         <div>
-          <div class="text-xs font-semibold text-slate-300 mb-2">最近 30 交易日历史估值与行情明细</div>
-          <div class="overflow-x-auto max-h-72 rounded-lg border border-slate-800">
-            <table class="w-full text-xs text-left border-collapse">
+          <div class="text-xs font-semibold text-slate-300 mb-1.5">最近 30 交易日逐日明细</div>
+          <div class="overflow-x-auto no-scrollbar max-h-56 rounded-lg border border-slate-800">
+            <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
               <thead class="sticky top-0 bg-slate-800 text-slate-400 shadow">
                 <tr>
-                  <th class="py-2 px-3">交易日期</th>
-                  <th class="py-2 px-3">代码</th>
-                  <th class="py-2 px-3 text-right">收盘点位</th>
-                  <th class="py-2 px-3 text-right">涨跌幅%</th>
-                  <th class="py-2 px-3 text-right">PE (TTM)</th>
-                  <th class="py-2 px-3 text-right">PE历史分位%</th>
-                  <th class="py-2 px-3 text-right">PB</th>
-                  <th class="py-2 px-3 text-right">股息率%</th>
+                  <th class="py-1.5 px-2.5">日期</th>
+                  <th class="py-1.5 px-2.5">代码</th>
+                  <th class="py-1.5 px-2.5 text-right">点位</th>
+                  <th class="py-1.5 px-2.5 text-right">涨跌幅%</th>
+                  <th class="py-1.5 px-2.5 text-right">PE</th>
+                  <th class="py-1.5 px-2.5 text-right">PE分位%</th>
+                  <th class="py-1.5 px-2.5 text-right">PB</th>
+                  <th class="py-1.5 px-2.5 text-right">股息率%</th>
                 </tr>
               </thead>
               <tbody id="idx-recent-rows-body" class="divide-y divide-slate-800 font-mono"></tbody>
@@ -326,171 +335,171 @@
     </div>
 
     <!-- ================================================================= -->
-    <!-- TAB 3: ETF 动量看板 (ETF Momentum & Trading Hub) - 重点核心 -->
+    <!-- TAB 3: ETF 动量看板 (ETF Momentum & Trading Hub) - 手机端优先重构 -->
     <!-- ================================================================= -->
-    <div id="view-etfs" class="hidden space-y-4">
-      <!-- 顶层：ETF 量化动量亮点卡片 (Leaderboard & Breadth) -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <!-- 20日动量领涨 Top -->
-        <div class="card p-4 space-y-2 border-l-4 border-l-emerald-500">
+    <div id="view-etfs" class="hidden space-y-3">
+      <!-- 顶层：ETF 量化动量 3 大亮点卡片 (手机垂直紧凑排布) -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+        <!-- 20日动量领跑 Top -->
+        <div class="card p-3 space-y-1.5 border-l-4 border-l-emerald-500">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <span>🚀</span> 近20日动量领跑 ETF (Top 3)
+              <span>🚀</span> 近20日动量领跑 Top 3
             </span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">ret_20d</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">ret_20d</span>
           </div>
-          <div id="etf-top-momentum" class="space-y-1.5 text-xs"></div>
+          <div id="etf-top-momentum" class="space-y-1 text-xs"></div>
         </div>
 
         <!-- 稳健低波避险 Top -->
-        <div class="card p-4 space-y-2 border-l-4 border-l-blue-500">
+        <div class="card p-3 space-y-1.5 border-l-4 border-l-blue-500">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <span>🛡️</span> 30日低波动防御 ETF (Top 3)
+              <span>🛡️</span> 30日低波动防御 Top 3
             </span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono">vol_30d</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-mono">vol_30d</span>
           </div>
-          <div id="etf-low-vol" class="space-y-1.5 text-xs"></div>
+          <div id="etf-low-vol" class="space-y-1 text-xs"></div>
         </div>
 
         <!-- 市场动量与均线宽度 -->
-        <div class="card p-4 space-y-2 border-l-4 border-l-amber-500">
+        <div class="card p-3 space-y-1.5 border-l-4 border-l-amber-500">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <span>📊</span> 核心 ETF 多头趋势宽度
+              <span>📊</span> 核心 ETF 均线多头宽度
             </span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">MA20 / MA60</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">MA20 / MA60</span>
           </div>
-          <div id="etf-trend-breadth" class="space-y-1.5 text-xs"></div>
+          <div id="etf-trend-breadth" class="space-y-1 text-xs"></div>
         </div>
       </div>
 
       <!-- 分类筛选与排序栏 -->
-      <div class="card p-3.5 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-semibold text-slate-400">ETF 分类:</span>
-          <div class="flex flex-wrap items-center gap-1.5" id="etf-category-filters">
-            <button onclick="filterEtfCards('all')" id="btn-etf-cat-all" class="sub-filter-btn active px-3 py-1 rounded-lg text-xs border border-slate-700 transition">
-              全部 ETF (9)
-            </button>
-            <button onclick="filterEtfCards('equity_broad')" id="btn-etf-cat-equity_broad" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              股票宽基 (3)
-            </button>
-            <button onclick="filterEtfCards('overseas')" id="btn-etf-cat-overseas" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              跨境海外 (2)
-            </button>
-            <button onclick="filterEtfCards('dividend')" id="btn-etf-cat-dividend" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              风格红利 (1)
-            </button>
-            <button onclick="filterEtfCards('safe_haven')" id="btn-etf-cat-safe_haven" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 hover:text-white transition">
-              固收与黄金 (3)
-            </button>
-          </div>
+      <div class="card p-2.5 space-y-2">
+        <div class="flex items-center justify-between px-0.5">
+          <span class="text-xs font-bold text-slate-300">ETF 分类筛选:</span>
+          <span class="text-[10px] text-slate-400">场内高流动标的</span>
         </div>
-
-        <div class="flex items-center gap-2">
-          <input type="text" id="etf-search-input" oninput="renderEtfMatrix()" placeholder="搜索代码或名称..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-40" />
-          <select id="etf-sort-select" onchange="renderEtfMatrix()" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
-            <option value="ret_20d_desc">按 20日动量: 从高到低 (动量进攻)</option>
-            <option value="ret_20d_asc">按 20日动量: 从低到高</option>
-            <option value="chg_1d_desc">按 今日涨跌幅: 从高到低</option>
-            <option value="vol_30d_asc">按 30日年化波动率: 从低到高 (防御低波)</option>
-          </select>
+        <!-- 横向滚动分类按钮 -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" id="etf-category-filters">
+          <button onclick="filterEtfCards('all')" id="btn-etf-cat-all" class="sub-filter-btn active px-3 py-1 rounded-lg text-xs border border-slate-700 shrink-0 transition">
+            全部 ETF (9)
+          </button>
+          <button onclick="filterEtfCards('equity_broad')" id="btn-etf-cat-equity_broad" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            股票宽基 (3)
+          </button>
+          <button onclick="filterEtfCards('overseas')" id="btn-etf-cat-overseas" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            跨境海外 (2)
+          </button>
+          <button onclick="filterEtfCards('dividend')" id="btn-etf-cat-dividend" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            风格红利 (1)
+          </button>
+          <button onclick="filterEtfCards('safe_haven')" id="btn-etf-cat-safe_haven" class="sub-filter-btn px-3 py-1 rounded-lg text-xs border border-slate-700 text-slate-300 shrink-0 transition">
+            固收黄金 (3)
+          </button>
         </div>
       </div>
 
       <!-- ETF 全景量化矩阵表 -->
-      <div class="card p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <span>⚡ 场内 ETF 量化动量与均线趋势矩阵</span>
-            <span class="text-xs font-normal text-slate-400">量化动量轮动核心标的池</span>
-          </h3>
-          <span class="text-xs text-slate-400">点击任意 ETF 行直接查看深度图表</span>
+      <div class="card p-3 sm:p-4 space-y-2.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+              <span>⚡</span> ETF 量化动量与均线趋势
+            </h3>
+            <span class="text-[10px] text-slate-400 sm:hidden">⇄ 横滑看全列</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <input type="text" id="etf-search-input" oninput="renderEtfMatrix()" placeholder="搜索ETF..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 flex-1 sm:w-36" />
+            <select id="etf-sort-select" onchange="renderEtfMatrix()" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+              <option value="ret_20d_desc">20日动量: 高到低</option>
+              <option value="ret_20d_asc">20日动量: 低到高</option>
+              <option value="chg_1d_desc">今日涨幅: 高到低</option>
+              <option value="vol_30d_asc">波动率: 低到高</option>
+            </select>
+          </div>
         </div>
 
-        <div class="overflow-x-auto rounded-lg border border-slate-800">
-          <table class="w-full text-xs text-left border-collapse">
+        <div class="overflow-x-auto no-scrollbar rounded-lg border border-slate-800">
+          <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr class="border-b border-slate-700/80 bg-slate-800/60 text-slate-400">
-                <th class="py-2.5 px-3">ETF 代码</th>
-                <th class="py-2.5 px-3">ETF 名称</th>
-                <th class="py-2.5 px-3">跟踪标的指数</th>
-                <th class="py-2.5 px-3 text-right">最新市价</th>
-                <th class="py-2.5 px-3 text-right">今日涨跌幅</th>
-                <th class="py-2.5 px-3 text-right">近5日(1W)</th>
-                <th class="py-2.5 px-3 text-right">20日动量 (ret_20d)</th>
-                <th class="py-2.5 px-3 text-right">近60日(3M)</th>
-                <th class="py-2.5 px-3 text-right">30日年化波动率</th>
-                <th class="py-2.5 px-3 text-center">均线趋势信号</th>
-                <th class="py-2.5 px-3 text-right">距52周高点</th>
-                <th class="py-2.5 px-3 text-center">量化状态评级</th>
-                <th class="py-2.5 px-3 text-center">操作</th>
+              <tr class="border-b border-slate-700/80 bg-slate-800/70 text-slate-400">
+                <th class="py-2 px-2.5">ETF代码</th>
+                <th class="py-2 px-2.5">ETF名称</th>
+                <th class="py-2 px-2.5">跟踪标的</th>
+                <th class="py-2 px-2.5 text-right">最新市价</th>
+                <th class="py-2 px-2.5 text-right">今日涨跌</th>
+                <th class="py-2 px-2.5 text-right">近5日</th>
+                <th class="py-2 px-2.5 text-right">20日动量</th>
+                <th class="py-2 px-2.5 text-right">近60日</th>
+                <th class="py-2 px-2.5 text-right">30日波动率</th>
+                <th class="py-2 px-2.5 text-center">均线趋势</th>
+                <th class="py-2 px-2.5 text-right">距高点</th>
+                <th class="py-2 px-2.5 text-center">状态评级</th>
+                <th class="py-2 px-2.5 text-center">操作</th>
               </tr>
             </thead>
-            <tbody id="etf-matrix-body" class="divide-y divide-slate-800"></tbody>
+            <tbody id="etf-matrix-body" class="divide-y divide-slate-800 font-mono"></tbody>
           </table>
         </div>
       </div>
 
-      <!-- ETF 深度技术与大类资产对比区 -->
-      <div class="card p-4 space-y-4" id="section-etf-deepdive">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-          <div class="flex items-center gap-3">
-            <span class="text-xs font-bold text-slate-300">深度透视 ETF:</span>
-            <!-- ETF 芯片切换器 -->
-            <div class="flex flex-wrap items-center gap-1.5" id="etf-chips-container"></div>
+      <!-- ETF 深度技术透视区 -->
+      <div class="card p-3 sm:p-4 space-y-3" id="section-etf-deepdive">
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-300">快速切换透视 ETF:</span>
+            <span class="text-[10px] text-slate-400 font-mono">左右滑动选择</span>
           </div>
-          <div id="etf-badge-stats" class="text-xs font-mono text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800"></div>
+          <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" id="etf-chips-container"></div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <!-- 图表 1: ETF 价格走势与 MA20 / MA60 均线系统 -->
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">ETF 价格趋势与 MA20 / MA60 均线系统</span>
-              <span class="text-[11px] text-slate-400">白线: 收盘价 | 黄线: MA20 | 紫线: MA60</span>
+        <div id="etf-badge-stats" class="text-xs text-slate-300 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 flex flex-wrap items-center gap-2"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <!-- 图表 1: ETF 价格与 MA20 / MA60 均线 -->
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-slate-300">价格趋势与 MA20 / MA60 均线</span>
+              <span class="text-[10px] text-slate-400">黄:MA20 | 紫:MA60</span>
             </div>
-            <div id="chart-etf-price-ma" style="width: 100%; height: 320px;"></div>
+            <div id="chart-etf-price-ma" style="width: 100%; height: 250px;"></div>
           </div>
 
-          <!-- 图表 2: ETF 动量柱状图与波动率 -->
-          <div class="card p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-semibold text-slate-300">20日动量柱状图与 30日年化波动率</span>
-              <span class="text-[11px] text-slate-400">柱状: 动量值 % | 橙折线: 波动率 %</span>
+          <!-- 图表 2: 动量柱状图与波动率 -->
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-slate-300">20日动量柱状与 30日波动率</span>
+              <span class="text-[10px] text-slate-400">动量聚散监测</span>
             </div>
-            <div id="chart-etf-momentum-vol" style="width: 100%; height: 320px;"></div>
+            <div id="chart-etf-momentum-vol" style="width: 100%; height: 250px;"></div>
           </div>
         </div>
 
-        <!-- 图表 3: 核心大类 ETF 近 250 天归一化走势对比 -->
-        <div class="card p-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <div>
-              <span class="text-xs font-semibold text-slate-300">大类资产核心 ETF 归一化收益率走势对比 (基准点 = 100)</span>
-              <p class="text-[11px] text-slate-400 mt-0.5">直观横向比对宽基股指、海外跨境、商品黄金与国债收益分化与轮动</p>
-            </div>
-            <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-blue-300">Normalized Return</span>
+        <!-- 图表 3: 归一化走势对比 -->
+        <div class="card p-3 space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-300">大类资产核心 ETF 归一化走势对比 (基准 = 100)</span>
+            <span class="text-[10px] text-slate-400 font-mono">大类轮动比价</span>
           </div>
-          <div id="chart-etf-comparison" style="width: 100%; height: 360px;"></div>
+          <div id="chart-etf-comparison" style="width: 100%; height: 260px;"></div>
         </div>
 
         <!-- ETF 最近 30 交易日明细 -->
         <div>
-          <div class="text-xs font-semibold text-slate-300 mb-2">最近 30 交易日行情与因子明细</div>
-          <div class="overflow-x-auto max-h-64 rounded-lg border border-slate-800">
-            <table class="w-full text-xs text-left border-collapse">
+          <div class="text-xs font-semibold text-slate-300 mb-1.5">最近 30 交易日行情与因子明细</div>
+          <div class="overflow-x-auto no-scrollbar max-h-56 rounded-lg border border-slate-800">
+            <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
               <thead class="sticky top-0 bg-slate-800 text-slate-400 shadow">
                 <tr>
-                  <th class="py-2 px-3">日期</th>
-                  <th class="py-2 px-3">代码</th>
-                  <th class="py-2 px-3 text-right">收盘价</th>
-                  <th class="py-2 px-3 text-right">涨跌幅%</th>
-                  <th class="py-2 px-3 text-right">MA20</th>
-                  <th class="py-2 px-3 text-right">MA60</th>
-                  <th class="py-2 px-3 text-right">20日动量%</th>
-                  <th class="py-2 px-3 text-right">30日波动率%</th>
+                  <th class="py-1.5 px-2.5">日期</th>
+                  <th class="py-1.5 px-2.5">代码</th>
+                  <th class="py-1.5 px-2.5 text-right">收盘价</th>
+                  <th class="py-1.5 px-2.5 text-right">涨跌幅%</th>
+                  <th class="py-1.5 px-2.5 text-right">MA20</th>
+                  <th class="py-1.5 px-2.5 text-right">MA60</th>
+                  <th class="py-1.5 px-2.5 text-right">20日动量%</th>
+                  <th class="py-1.5 px-2.5 text-right">30日波动%</th>
                 </tr>
               </thead>
               <tbody id="etf-recent-rows-body" class="divide-y divide-slate-800 font-mono"></tbody>
@@ -501,50 +510,49 @@
     </div>
 
     <!-- ================================================================= -->
-    <!-- TAB 4: 全部标的快照 (Overview) -->
+    <!-- TAB 4: 全部标的快照 (Overview) - 手机端优先重构 -->
     <!-- ================================================================= -->
-    <div id="view-overview" class="hidden space-y-4">
-      <div class="card p-4 space-y-3">
-        <div class="flex flex-wrap items-center justify-between gap-3">
+    <div id="view-overview" class="hidden space-y-3">
+      <div class="card p-3 sm:p-4 space-y-2.5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <h3 class="text-sm font-bold text-white flex items-center gap-2">
-              <span>🌐 全部 24 个监控资产元数据与最新快照</span>
+            <h3 class="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+              <span>🌐</span> 全部 24 个监控资产快照
             </h3>
-            <p class="text-xs text-slate-400 mt-0.5">涵盖指数、场内ETF、债券、黄金与宏观温度计（点击任意行可联动查看深度图表）</p>
+            <p class="text-[11px] text-slate-400 mt-0.5">涵盖指数、ETF、债券、黄金与宏观温度计</p>
           </div>
-          <div class="flex items-center gap-2">
-            <!-- 资产分类过滤 -->
+          <div class="flex items-center gap-1.5">
             <select id="all-type-filter" onchange="renderAllAssetsTable()" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white">
               <option value="all">全部类型 (24)</option>
               <option value="index">股票指数 (10)</option>
               <option value="etf">场内 ETF (9)</option>
               <option value="bond">债券指数 (2)</option>
               <option value="gold">上海黄金 (1)</option>
-              <option value="macro">宏观温度计 (2)</option>
+              <option value="macro">宏观指标 (2)</option>
             </select>
-            <input type="text" id="all-search-input" oninput="renderAllAssetsTable()" placeholder="搜索代码或名称..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-44" />
+            <input type="text" id="all-search-input" oninput="renderAllAssetsTable()" placeholder="搜索标的..." class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 flex-1 sm:w-36" />
           </div>
         </div>
 
-        <div class="overflow-x-auto rounded-lg border border-slate-800">
-          <table class="w-full text-xs text-left border-collapse">
+        <div class="overflow-x-auto no-scrollbar rounded-lg border border-slate-800">
+          <table class="w-full text-xs text-left border-collapse whitespace-nowrap">
             <thead class="bg-slate-800/80 text-slate-400">
               <tr>
-                <th class="py-2.5 px-3">标的代码</th>
-                <th class="py-2.5 px-3">名称</th>
-                <th class="py-2.5 px-3">类型</th>
-                <th class="py-2.5 px-3">市场</th>
-                <th class="py-2.5 px-3">关联交易ETF</th>
-                <th class="py-2.5 px-3">最新日期</th>
-                <th class="py-2.5 px-3 text-right">最新价格/点位</th>
-                <th class="py-2.5 px-3 text-right">最新 PE</th>
-                <th class="py-2.5 px-3 text-right">PE 10年分位</th>
-                <th class="py-2.5 px-3 text-right">20日动量%</th>
-                <th class="py-2.5 px-3 text-right">30日波动率%</th>
-                <th class="py-2.5 px-3 text-center">快捷入口</th>
+                <th class="py-2 px-2.5">标的代码</th>
+                <th class="py-2 px-2.5">名称</th>
+                <th class="py-2 px-2.5">类型</th>
+                <th class="py-2 px-2.5">市场</th>
+                <th class="py-2 px-2.5">交易ETF</th>
+                <th class="py-2 px-2.5">最新日期</th>
+                <th class="py-2 px-2.5 text-right">最新价</th>
+                <th class="py-2 px-2.5 text-right">最新 PE</th>
+                <th class="py-2 px-2.5 text-right">PE分位</th>
+                <th class="py-2 px-2.5 text-right">20日动量</th>
+                <th class="py-2 px-2.5 text-right">30日波动</th>
+                <th class="py-2 px-2.5 text-center">快捷入口</th>
               </tr>
             </thead>
-            <tbody id="db-summary-body" class="divide-y divide-slate-800"></tbody>
+            <tbody id="db-summary-body" class="divide-y divide-slate-800 font-mono"></tbody>
           </table>
         </div>
       </div>
@@ -552,12 +560,27 @@
 
   </main>
 
-  <footer class="border-t border-slate-800/80 bg-slate-900/60 py-3 text-center text-xs text-slate-500">
-    <div class="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
-      <div>Union Quant 统一量化资产配置与动量轮动系统</div>
-      <div class="font-mono">一个库表 · 一个拉数据 · 一个算策略 · Vercel 静态看板</div>
-    </div>
-  </footer>
+  <!-- =================================================================== -->
+  <!-- 移动端专属吸底导航栏 (Native Mobile App TabBar) -->
+  <!-- =================================================================== -->
+  <nav class="fixed bottom-0 inset-x-0 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/90 z-50 flex items-center justify-around py-1.5 px-2 pb-[calc(0.4rem+var(--sab))] shadow-2xl">
+    <button onclick="switchTab('strategies')" id="mob-tab-strategies" class="mob-tab-btn active flex flex-col items-center justify-center flex-1 py-1 text-slate-400 transition">
+      <span class="mob-tab-icon text-lg transition">📊</span>
+      <span class="text-[10px] font-medium mt-0.5 tracking-tight">策略信号</span>
+    </button>
+    <button onclick="switchTab('indices')" id="mob-tab-indices" class="mob-tab-btn flex flex-col items-center justify-center flex-1 py-1 text-slate-400 transition">
+      <span class="mob-tab-icon text-lg transition">📈</span>
+      <span class="text-[10px] font-medium mt-0.5 tracking-tight">指数估值</span>
+    </button>
+    <button onclick="switchTab('etfs')" id="mob-tab-etfs" class="mob-tab-btn flex flex-col items-center justify-center flex-1 py-1 text-slate-400 transition">
+      <span class="mob-tab-icon text-lg transition">⚡</span>
+      <span class="text-[10px] font-medium mt-0.5 tracking-tight">ETF动量</span>
+    </button>
+    <button onclick="switchTab('overview')" id="mob-tab-overview" class="mob-tab-btn flex flex-col items-center justify-center flex-1 py-1 text-slate-400 transition">
+      <span class="mob-tab-icon text-lg transition">🔍</span>
+      <span class="text-[10px] font-medium mt-0.5 tracking-tight">资产全景</span>
+    </button>
+  </nav>
 
   <!-- 全局交互与数据渲染脚本 -->
   <script>
@@ -634,7 +657,6 @@
       colorMode = colorMode === 'cn' ? 'intl' : 'cn';
       localStorage.setItem('uq_color_mode', colorMode);
       updateColorModeLabel();
-      // 重新渲染当前相关视图
       renderIndexCards();
       renderIndexMatrix();
       renderEtfMatrix();
@@ -647,10 +669,10 @@
     function updateColorModeLabel() {
       const label = document.getElementById('label-color-mode');
       if (colorMode === 'cn') {
-        label.textContent = '红涨绿跌 (CN)';
+        label.textContent = '红涨(CN)';
         label.className = 'font-bold text-rose-400';
       } else {
-        label.textContent = '绿涨红跌 (INTL)';
+        label.textContent = '绿涨(INTL)';
         label.className = 'font-bold text-emerald-400';
       }
     }
@@ -696,13 +718,15 @@
       return Number(val.toFixed(dec));
     }
 
-    // 主 Tab 切换
+    // 主 Tab 切换 (同步顶部桌面导航与移动端底部导航)
     function switchTab(tab) {
       ['strategies', 'indices', 'etfs', 'overview'].forEach(t => {
         const viewEl = document.getElementById('view-' + t);
         const tabEl = document.getElementById('tab-' + t);
+        const mobTabEl = document.getElementById('mob-tab-' + t);
         if (viewEl) viewEl.classList.toggle('hidden', t !== tab);
         if (tabEl) tabEl.classList.toggle('active', t === tab);
+        if (mobTabEl) mobTabEl.classList.toggle('active', t === tab);
       });
 
       // 调整图表尺寸
@@ -737,11 +761,10 @@
       }
 
       document.getElementById('gen-time-banner').innerHTML = `
-        <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-        最后更新: <span class="font-bold text-slate-200">${bundle.generated_at}</span> | 标的总数: ${bundle.counts.asset_meta} | 核心策略: ${bundle.registered_strategies.length}
+        <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        更新: <span class="text-slate-200 font-semibold">${bundle.generated_at.split(' ')[0]}</span> | 标的:${bundle.counts.asset_meta} | 实盘:${bundle.registered_strategies.length}
       `;
 
-      // 渲染各个板块
       initStrategies();
       initIndices();
       initEtfs();
@@ -776,19 +799,19 @@
         const sig = item ? item.signal : {};
         const btn = document.createElement('button');
         btn.id = 'strat-btn-' + sid;
-        btn.className = 'strat-btn w-full text-left p-2.5 rounded-lg border border-slate-700/80 hover:bg-slate-800 transition flex flex-col gap-1';
+        btn.className = 'strat-btn min-w-[200px] sm:min-w-[220px] text-left p-2 rounded-xl border border-slate-700/80 hover:bg-slate-800 transition flex flex-col gap-1 shrink-0';
         btn.onclick = () => selectStrategy(sid);
         btn.innerHTML = `
-          <div class="flex items-center justify-between">
-            <span class="font-semibold text-xs text-white flex items-center gap-1.5">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <div class="flex items-center justify-between gap-1">
+            <span class="font-bold text-xs text-white truncate flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
               ${item ? item.strategy_name : sid}
             </span>
-            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">${sig.signal_date || '-'}</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 shrink-0">${sig.signal_date ? sig.signal_date.slice(5) : '-'}</span>
           </div>
           <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
             <span class="truncate">${sid}</span>
-            <span class="text-[10px] text-emerald-400 font-sans font-medium">🟢 线上实盘</span>
+            <span class="text-[10px] text-emerald-400 font-sans font-medium shrink-0">🟢 线上</span>
           </div>
         `;
         listEl.appendChild(btn);
@@ -814,16 +837,16 @@
 
       document.getElementById('st-title').innerHTML = `
         <span class="text-white font-bold">${data.strategy_name}</span>
-        <span class="text-xs text-slate-400 font-mono">(${data.strategy_id})</span>
-        <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium ml-1">🟢 线上实盘</span>
+        <span class="text-[10px] text-slate-400 font-mono hidden sm:inline">(${data.strategy_id})</span>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium ml-1">🟢 线上实盘</span>
       `;
       const badge = document.getElementById('st-rebalance-badge');
       if (sig.is_rebalance_day) {
         badge.textContent = '今日触发调仓';
-        badge.className = 'text-xs px-2.5 py-0.5 rounded-full font-medium bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded-full font-medium bg-rose-500/20 text-rose-300 border border-rose-500/40 shrink-0';
       } else {
         badge.textContent = '持仓观察期';
-        badge.className = 'text-xs px-2.5 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0';
       }
       document.getElementById('st-trigger-reason').textContent = `决策摘要: ${sig.trigger_reason || '正常运行中'}`;
       document.getElementById('st-signal-date').textContent = sig.signal_date || '-';
@@ -853,23 +876,22 @@
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-800/40 transition';
         tr.innerHTML = `
-          <td class="py-2 px-3 font-mono font-semibold text-blue-400">${item.symbol}</td>
-          <td class="py-2 px-3 text-white font-medium">${item.name || item.symbol}</td>
-          <td class="py-2 px-3 font-mono text-slate-400">${item.trade_symbol || '-'}</td>
-          <td class="py-2 px-3"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px] font-mono">${roleDesc}</span></td>
-          <td class="py-2 px-3 font-mono text-emerald-400">${item.data_date || sig.signal_date || '-'}</td>
-          <td class="py-2 px-3 text-right font-mono text-white">${item.close != null ? Number(item.close).toFixed(3) : '-'}</td>
-          <td class="py-2 px-3 text-right font-mono text-slate-300">${peOrMa}</td>
-          <td class="py-2 px-3">${factorDesc}</td>
-          <td class="py-2 px-3">
-            <div class="flex items-center gap-2">
-              <div class="w-20 bg-slate-800 h-2 rounded-full overflow-hidden">
+          <td class="py-2 px-2.5 font-mono font-semibold text-blue-400">${item.symbol}</td>
+          <td class="py-2 px-2.5 text-white font-medium">${item.name || item.symbol}</td>
+          <td class="py-2 px-2.5 font-mono text-slate-400">${item.trade_symbol || '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-white font-bold">${item.close != null ? Number(item.close).toFixed(3) : '-'}</td>
+          <td class="py-2 px-2.5">
+            <div class="flex items-center gap-1.5">
+              <div class="w-16 bg-slate-800 h-2 rounded-full overflow-hidden">
                 <div class="bg-blue-500 h-full" style="width: ${Math.min(100, Math.max(0, wPct))}%"></div>
               </div>
-              <span class="font-mono font-bold text-white">${wPct}%</span>
+              <span class="font-mono font-bold text-white text-[11px]">${wPct}%</span>
             </div>
           </td>
-          <td class="py-2 px-3 text-slate-300 font-mono text-[11px] leading-relaxed max-w-xs break-words">${item.calculation_process || '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-slate-300">${peOrMa}</td>
+          <td class="py-2 px-2.5">${factorDesc}</td>
+          <td class="py-2 px-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-mono">${roleDesc}</span></td>
+          <td class="py-2 px-2.5 text-slate-300 font-mono text-[11px] leading-relaxed max-w-xs break-words">${item.calculation_process || '-'}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -877,18 +899,18 @@
       const m = data.metrics || {};
       const metricItems = [
         { label: '累计总收益', val: m.total_return != null ? (m.total_return * 100).toFixed(2) + '%' : '-', color: getTrendColor(m.total_return) },
-        { label: '年化收益(CAGR)', val: m.cagr != null ? (m.cagr * 100).toFixed(2) + '%' : '-', color: getTrendColor(m.cagr) },
+        { label: '年化收益', val: m.cagr != null ? (m.cagr * 100).toFixed(2) + '%' : '-', color: getTrendColor(m.cagr) },
         { label: '最大回撤', val: m.max_drawdown != null ? (m.max_drawdown * 100).toFixed(2) + '%' : '-', color: 'text-rose-400' },
         { label: '年化波动率', val: m.annual_volatility != null ? (m.annual_volatility * 100).toFixed(2) + '%' : '-', color: 'text-slate-200' },
-        { label: '夏普比率(Sharpe)', val: m.sharpe_ratio != null ? Number(m.sharpe_ratio).toFixed(2) : '-', color: 'text-blue-400' },
-        { label: '索提诺(Sortino)', val: m.sortino_ratio != null ? Number(m.sortino_ratio).toFixed(2) : '-', color: 'text-blue-400' },
-        { label: '卡玛比率(Calmar)', val: m.calmar_ratio != null ? Number(m.calmar_ratio).toFixed(2) : '-', color: 'text-amber-300' },
-        { label: '调仓总次数', val: m.rebalance_count != null ? m.rebalance_count + ' 次' : '-', color: 'text-purple-300' },
+        { label: '夏普比率', val: m.sharpe_ratio != null ? Number(m.sharpe_ratio).toFixed(2) : '-', color: 'text-blue-400' },
+        { label: '索提诺', val: m.sortino_ratio != null ? Number(m.sortino_ratio).toFixed(2) : '-', color: 'text-blue-400' },
+        { label: '卡玛比率', val: m.calmar_ratio != null ? Number(m.calmar_ratio).toFixed(2) : '-', color: 'text-amber-300' },
+        { label: '调仓次数', val: m.rebalance_count != null ? m.rebalance_count + ' 次' : '-', color: 'text-purple-300' },
       ];
       document.getElementById('st-metrics-grid').innerHTML = metricItems.map(it => `
-        <div class="card p-2.5">
-          <div class="text-[11px] text-slate-400 truncate">${it.label}</div>
-          <div class="text-base font-bold font-mono mt-0.5 ${it.color}">${it.val}</div>
+        <div class="card p-2 text-center sm:text-left">
+          <div class="text-[10px] text-slate-400 truncate">${it.label}</div>
+          <div class="text-sm sm:text-base font-bold font-mono mt-0.5 ${it.color}">${it.val}</div>
         </div>
       `).join('');
 
@@ -896,22 +918,22 @@
       if (!navChart) navChart = echarts.init(dom);
       navChart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis' },
-        legend: { data: ['策略净值 (NAV)', '回撤 (%)'], textStyle: { color: '#94a3b8', fontSize: 11 } },
+        tooltip: { trigger: 'axis', confine: true },
+        legend: { data: ['策略净值 (NAV)', '回撤 (%)'], textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
         grid: [
-          { left: 55, right: 30, top: 30, height: '55%' },
-          { left: 55, right: 30, top: '72%', height: '20%' }
+          { left: 45, right: 15, top: 25, height: '52%' },
+          { left: 45, right: 15, top: '70%', height: '22%' }
         ],
         xAxis: [
-          { type: 'category', data: data.chart.dates, gridIndex: 0, axisLabel: { color: '#64748b', fontSize: 10 } },
+          { type: 'category', data: data.chart.dates, gridIndex: 0, axisLabel: { color: '#64748b', fontSize: 9 } },
           { type: 'category', data: data.chart.dates, gridIndex: 1, axisLabel: { show: false } }
         ],
         yAxis: [
-          { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 10 } },
-          { type: 'value', gridIndex: 1, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#f43f5e', fontSize: 10, formatter: '{value}%' } }
+          { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 9 } },
+          { type: 'value', gridIndex: 1, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#f43f5e', fontSize: 9, formatter: '{value}%' } }
         ],
         series: [
-          { name: '策略净值 (NAV)', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: data.chart.nav, showSymbol: false, lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59, 130, 246, 0.12)' } },
+          { name: '策略净值 (NAV)', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: data.chart.nav, showSymbol: false, lineStyle: { width: 1.8, color: '#3b82f6' }, areaStyle: { color: 'rgba(59, 130, 246, 0.12)' } },
           { name: '回撤 (%)', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: data.chart.drawdown_pct, showSymbol: false, lineStyle: { width: 1, color: '#f43f5e' }, areaStyle: { color: 'rgba(244, 63, 94, 0.2)' } }
         ]
       }, true);
@@ -919,34 +941,34 @@
       document.getElementById('st-rebalance-body').innerHTML = (data.rebalance_log || []).map(r => {
         const wTags = Object.entries(r.weights || {})
           .filter(([_, v]) => v > 0.001)
-          .map(([k, v]) => `<span class="inline-block px-1.5 py-0.5 mr-1 mb-0.5 rounded bg-slate-800 font-mono text-[11px] text-blue-300">${k}: ${(v * 100).toFixed(1)}%</span>`)
+          .map(([k, v]) => `<span class="inline-block px-1.5 py-0.2 mr-1 mb-0.5 rounded bg-slate-800 font-mono text-[10px] text-blue-300">${k}: ${(v * 100).toFixed(0)}%</span>`)
           .join('');
         return `
-          <tr class="hover:bg-slate-800/40">
-            <td class="py-1.5 px-3 font-mono text-emerald-400">${r.signal_date}</td>
-            <td class="py-1.5 px-3 font-mono text-blue-400">${r.execution_date}</td>
-            <td class="py-1.5 px-3 text-slate-300">${r.trigger_reason}</td>
-            <td class="py-1.5 px-3 text-right font-mono">${((r.turnover || 0) * 100).toFixed(1)}%</td>
-            <td class="py-1.5 px-3">${wTags || '<span class="text-amber-300">Cash: 100%</span>'}</td>
+          <tr class="hover:bg-slate-800/40 font-mono">
+            <td class="py-1 px-2.5 text-emerald-400">${r.signal_date}</td>
+            <td class="py-1 px-2.5 text-blue-400">${r.execution_date}</td>
+            <td class="py-1 px-2.5 text-slate-300 font-sans">${r.trigger_reason}</td>
+            <td class="py-1 px-2.5 text-right font-bold">${((r.turnover || 0) * 100).toFixed(1)}%</td>
+            <td class="py-1 px-2.5">${wTags || '<span class="text-amber-300">Cash 100%</span>'}</td>
           </tr>
         `;
       }).join('');
     }
 
     // =========================================================================
-    // TAB 2: 指数估值中心 (Index Valuation Center) - 重点实现
+    // TAB 2: 指数估值中心 (Index Valuation Center)
     // =========================================================================
     let currentIdxCategory = 'all';
 
     function initIndices() {
-      // 渲染快速 Chips
+      // 渲染快速 Chips (横向滑动)
       const chipsEl = document.getElementById('idx-chips-container');
       chipsEl.innerHTML = '';
       const indexList = (bundle.asset_meta || []).filter(a => a.asset_type === 'index');
-      indexList.forEach((idxMeta, i) => {
+      indexList.forEach((idxMeta) => {
         const btn = document.createElement('button');
         btn.id = 'chip-idx-' + idxMeta.symbol.replace('.', '_');
-        btn.className = `chip-btn px-2.5 py-1 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white transition ${idxMeta.symbol === currentIndexSymbol ? 'active' : ''}`;
+        btn.className = `chip-btn px-2.5 py-1 rounded-lg text-xs border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white shrink-0 transition ${idxMeta.symbol === currentIndexSymbol ? 'active' : ''}`;
         btn.textContent = idxMeta.name;
         btn.onclick = () => renderIndexSymbol(idxMeta.symbol);
         chipsEl.appendChild(btn);
@@ -966,7 +988,6 @@
       renderIndexMatrix();
     }
 
-    // 辅助获取指数的最新数据综合包
     function getIndexDataSummary(sym) {
       const meta = (bundle.asset_meta || []).find(a => a.symbol === sym) || {};
       const mkt = (bundle.markets || {})[sym] || {};
@@ -1042,7 +1063,7 @@
         const d = getIndexDataSummary(idxMeta.symbol);
         const valInfo = getValuationInfo(d.pe_pct);
         const card = document.createElement('div');
-        card.className = `card card-hover p-3.5 space-y-2.5 cursor-pointer relative overflow-hidden ${d.symbol === currentIndexSymbol ? 'ring-2 ring-blue-500' : ''}`;
+        card.className = `card card-hover p-3 space-y-2 cursor-pointer relative overflow-hidden transition ${d.symbol === currentIndexSymbol ? 'ring-2 ring-blue-500' : ''}`;
         card.onclick = () => renderIndexSymbol(d.symbol);
 
         const pePctDisplay = d.pe_pct != null ? Number(d.pe_pct).toFixed(1) + '%' : '-';
@@ -1053,39 +1074,39 @@
         card.innerHTML = `
           <!-- 头部: 指数名称与代码 -->
           <div class="flex items-center justify-between">
-            <div>
+            <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class="font-bold text-sm text-white">${d.name}</span>
-                <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono">${d.market}</span>
+                <span class="font-bold text-sm text-white truncate">${d.name}</span>
+                <span class="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 font-mono">${d.market}</span>
               </div>
-              <div class="text-[11px] font-mono text-slate-400">${d.symbol}</div>
+              <div class="text-[10px] font-mono text-slate-400">${d.symbol}</div>
             </div>
             <div>
               ${getTrendBadge(d.chg_1d)}
             </div>
           </div>
 
-          <!-- 点位 -->
-          <div class="flex items-baseline justify-between">
-            <span class="text-xl font-bold font-mono text-white tracking-tight">${d.close != null ? Number(d.close).toFixed(2) : '-'}</span>
-            <span class="text-xs px-2 py-0.5 rounded-full border ${valInfo.color} font-medium">${valInfo.label}</span>
+          <!-- 点位与估值状态 -->
+          <div class="flex items-baseline justify-between pt-0.5">
+            <span class="text-lg font-bold font-mono text-white tracking-tight">${d.close != null ? Number(d.close).toFixed(2) : '-'}</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full border ${valInfo.color} font-medium">${valInfo.label}</span>
           </div>
 
           <!-- 估值温度计条 -->
           <div class="space-y-1">
-            <div class="flex items-center justify-between text-[11px]">
+            <div class="flex items-center justify-between text-[10px]">
               <span class="text-slate-400">10年PE分位:</span>
               <span class="font-mono font-bold text-white">${pePctDisplay}</span>
             </div>
-            <div class="w-full bg-slate-800/80 h-2 rounded-full overflow-hidden flex items-center p-0.5">
+            <div class="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden flex items-center">
               <div class="${valInfo.barColor} h-full rounded-full transition-all duration-500" style="width: ${Math.min(100, Math.max(5, d.pe_pct || 0))}%"></div>
             </div>
           </div>
 
-          <!-- PE / PB / 股息率小网格 -->
-          <div class="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-800/80 text-[11px]">
+          <!-- PE / PB / 股息率微网格 -->
+          <div class="grid grid-cols-3 gap-1 pt-1 border-t border-slate-800/80 text-[10px] text-center">
             <div>
-              <div class="text-slate-400">PE(TTM)</div>
+              <div class="text-slate-400">PE</div>
               <div class="font-mono font-semibold text-amber-300">${peDisplay}</div>
             </div>
             <div>
@@ -1099,9 +1120,9 @@
           </div>
 
           <!-- 关联交易 ETF -->
-          <div class="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[11px]">
+          <div class="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
             <span class="text-slate-400">交易ETF:</span>
-            ${d.trade_etf ? `<button onclick="event.stopPropagation(); jumpToEtf('${d.trade_etf}')" class="font-mono text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1">${d.trade_etf} ⚡</button>` : '<span class="text-slate-500">-</span>'}
+            ${d.trade_etf ? `<button onclick="event.stopPropagation(); jumpToEtf('${d.trade_etf}')" class="font-mono text-blue-400 hover:text-blue-300 font-bold flex items-center gap-0.5">${d.trade_etf} ⚡</button>` : '<span class="text-slate-500">-</span>'}
           </div>
         `;
         container.appendChild(card);
@@ -1123,7 +1144,6 @@
         list = list.filter(a => a.symbol.toLowerCase().includes(q) || a.name.toLowerCase().includes(q));
       }
 
-      // 获取汇总数据并排序
       let dataList = list.map(a => getIndexDataSummary(a.symbol));
       const sortBy = (document.getElementById('idx-sort-select') && document.getElementById('idx-sort-select').value) || 'pe_pct_asc';
       if (sortBy === 'pe_pct_asc') {
@@ -1143,39 +1163,35 @@
         tr.onclick = () => renderIndexSymbol(d.symbol);
 
         const pePctDisplay = d.pe_pct != null ? Number(d.pe_pct).toFixed(1) + '%' : '-';
-        const pbPctDisplay = d.pb_pct != null ? Number(d.pb_pct).toFixed(1) + '%' : '-';
         const dyDisplay = d.dy != null ? Number(d.dy).toFixed(2) + '%' : '-';
 
         tr.innerHTML = `
-          <td class="py-2.5 px-3 font-mono font-semibold text-blue-400">${d.symbol}</td>
-          <td class="py-2.5 px-3 text-white font-medium">${d.name}</td>
-          <td class="py-2.5 px-3"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[11px]">${d.market}</span></td>
-          <td class="py-2.5 px-3 font-mono">
-            ${d.trade_etf ? `<button onclick="event.stopPropagation(); jumpToEtf('${d.trade_etf}')" class="text-blue-400 hover:text-blue-300 hover:underline">${d.trade_etf}</button>` : '<span class="text-slate-500">-</span>'}
+          <td class="py-2 px-2.5 font-mono font-semibold text-blue-400">${d.symbol}</td>
+          <td class="py-2 px-2.5 text-white font-medium font-sans">${d.name}</td>
+          <td class="py-2 px-2.5"><span class="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">${d.market}</span></td>
+          <td class="py-2 px-2.5 font-mono">
+            ${d.trade_etf ? `<button onclick="event.stopPropagation(); jumpToEtf('${d.trade_etf}')" class="text-blue-400 hover:text-blue-300">${d.trade_etf}</button>` : '<span class="text-slate-500">-</span>'}
           </td>
-          <td class="py-2.5 px-3 text-right font-mono text-white font-bold">${d.close != null ? Number(d.close).toFixed(2) : '-'}</td>
-          <td class="py-2.5 px-3 text-right">${getTrendBadge(d.chg_1d)}</td>
-          <td class="py-2.5 px-3 text-right font-mono ${getTrendColor(d.chg_5d)}">${d.chg_5d != null ? (d.chg_5d > 0 ? '+' : '') + Number(d.chg_5d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono ${getTrendColor(d.chg_20d)}">${d.chg_20d != null ? (d.chg_20d > 0 ? '+' : '') + Number(d.chg_20d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-amber-300 font-semibold">${d.pe != null ? Number(d.pe).toFixed(2) : '-'}</td>
-          <td class="py-2.5 px-3">
-            <div class="flex items-center gap-2">
-              <div class="w-16 bg-slate-800 h-2 rounded-full overflow-hidden">
+          <td class="py-2 px-2.5 text-right font-mono text-white font-bold">${d.close != null ? Number(d.close).toFixed(2) : '-'}</td>
+          <td class="py-2 px-2.5 text-right">${getTrendBadge(d.chg_1d)}</td>
+          <td class="py-2 px-2.5 text-right font-mono ${getTrendColor(d.chg_5d)}">${d.chg_5d != null ? (d.chg_5d > 0 ? '+' : '') + Number(d.chg_5d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono ${getTrendColor(d.chg_20d)}">${d.chg_20d != null ? (d.chg_20d > 0 ? '+' : '') + Number(d.chg_20d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-amber-300 font-semibold">${d.pe != null ? Number(d.pe).toFixed(2) : '-'}</td>
+          <td class="py-2 px-2.5">
+            <div class="flex items-center gap-1.5">
+              <div class="w-14 bg-slate-800 h-1.5 rounded-full overflow-hidden">
                 <div class="${valInfo.barColor} h-full" style="width: ${Math.min(100, Math.max(0, d.pe_pct || 0))}%"></div>
               </div>
-              <span class="font-mono text-white font-semibold text-[11px]">${pePctDisplay}</span>
+              <span class="font-mono text-white font-semibold text-[10px]">${pePctDisplay}</span>
             </div>
           </td>
-          <td class="py-2.5 px-3 text-right font-mono text-slate-300">
-            ${d.pb != null ? Number(d.pb).toFixed(2) : '-'}
-            ${d.pb_pct != null ? `<span class="text-slate-400 text-[10px]">(${pbPctDisplay})</span>` : ''}
+          <td class="py-2 px-2.5 text-right font-mono text-slate-300">${d.pb != null ? Number(d.pb).toFixed(2) : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-emerald-400 font-semibold">${dyDisplay}</td>
+          <td class="py-2 px-2.5 text-center">
+            <span class="px-2 py-0.5 rounded-full border ${valInfo.color} text-[9px] font-medium font-sans">${valInfo.label}</span>
           </td>
-          <td class="py-2.5 px-3 text-right font-mono text-emerald-400 font-semibold">${dyDisplay}</td>
-          <td class="py-2.5 px-3 text-center">
-            <span class="px-2 py-0.5 rounded-full border ${valInfo.color} text-[10px] font-medium">${valInfo.label}</span>
-          </td>
-          <td class="py-2.5 px-3 text-center">
-            <button onclick="event.stopPropagation(); renderIndexSymbol('${d.symbol}')" class="px-2 py-1 rounded bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white transition text-[11px]">走势</button>
+          <td class="py-2 px-2.5 text-center">
+            <button onclick="event.stopPropagation(); renderIndexSymbol('${d.symbol}')" class="px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white transition text-[10px]">走势</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -1187,22 +1203,23 @@
       document.querySelectorAll('#idx-chips-container button').forEach(b => {
         b.classList.toggle('active', b.id === 'chip-idx-' + symbol.replace('.', '_'));
       });
-      renderIndexCards(); // 刷新卡片外边框高亮
+      renderIndexCards();
 
       const d = getIndexDataSummary(symbol);
       const valInfo = getValuationInfo(d.pe_pct);
       const badge = document.getElementById('idx-badge-stats');
       badge.innerHTML = `
-        <span class="text-white font-bold">${d.name} (${d.symbol})</span>
-        <span class="text-slate-400 mx-1">|</span>
-        最新点位: <span class="text-white font-bold">${d.close != null ? Number(d.close).toFixed(2) : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
-        今日涨跌: <span class="${getTrendColor(d.chg_1d)} font-bold">${d.chg_1d != null ? (d.chg_1d > 0 ? '+' : '') + Number(d.chg_1d).toFixed(2) + '%' : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
+        <span class="text-white font-bold">${d.name}</span>
+        <span class="text-slate-400 font-mono text-[11px]">(${d.symbol})</span>
+        <span class="text-slate-500">·</span>
+        点位: <span class="text-white font-bold">${d.close != null ? Number(d.close).toFixed(2) : '-'}</span>
+        <span class="text-slate-500">·</span>
+        今日: <span class="${getTrendColor(d.chg_1d)} font-bold">${d.chg_1d != null ? (d.chg_1d > 0 ? '+' : '') + Number(d.chg_1d).toFixed(2) + '%' : '-'}</span>
+        <span class="text-slate-500">·</span>
         PE: <span class="text-amber-300 font-bold">${d.pe != null ? Number(d.pe).toFixed(2) : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
-        10年分位: <span class="text-cyan-300 font-bold">${d.pe_pct != null ? Number(d.pe_pct).toFixed(1) + '%' : '-'}</span>
-        <span class="ml-2 px-2 py-0.5 rounded-full border ${valInfo.color} text-[11px] font-medium">${valInfo.label}</span>
+        <span class="text-slate-500">·</span>
+        分位: <span class="text-cyan-300 font-bold">${d.pe_pct != null ? Number(d.pe_pct).toFixed(1) + '%' : '-'}</span>
+        <span class="px-2 py-0.5 rounded-full border ${valInfo.color} text-[10px] ml-auto">${valInfo.label}</span>
       `;
 
       const mkt = (bundle.markets || {})[symbol] || {};
@@ -1210,19 +1227,19 @@
       const closeArr = mkt.close || [];
       const peArr = mkt.pe || [];
 
-      // 图表 1: 收盘价与 PE 双轴图
+      // 图表 1: 收盘价与 PE 双轴联动
       const pDom = document.getElementById('chart-index-price');
       if (!idxPriceChart) idxPriceChart = echarts.init(pDom);
       const hasPe = peArr.some(v => v != null);
       const seriesPrice = [
         {
-          name: '收盘点位',
+          name: '点位',
           type: 'line',
           yAxisIndex: 0,
           data: closeArr,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: 2, color: '#38bdf8' },
+          lineStyle: { width: 1.8, color: '#38bdf8' },
           areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(56, 189, 248, 0.25)' }, { offset: 1, color: 'rgba(56, 189, 248, 0.0)' }]) }
         }
       ];
@@ -1234,56 +1251,56 @@
           data: peArr,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: 1.8, type: 'dashed', color: '#f59e0b' }
+          lineStyle: { width: 1.5, type: 'dashed', color: '#f59e0b' }
         });
       }
 
       idxPriceChart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis' },
-        legend: { textStyle: { color: '#94a3b8', fontSize: 11 } },
-        grid: { left: 55, right: 55, top: 35, bottom: 25 },
-        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 10 } },
+        tooltip: { trigger: 'axis', confine: true },
+        legend: { textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
+        grid: { left: 45, right: 35, top: 25, bottom: 20 },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 9 } },
         yAxis: [
-          { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#38bdf8', fontSize: 10 } },
-          { type: 'value', scale: true, splitLine: { show: false }, axisLabel: { color: '#f59e0b', fontSize: 10 } }
+          { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#38bdf8', fontSize: 9 } },
+          { type: 'value', scale: true, splitLine: { show: false }, axisLabel: { color: '#f59e0b', fontSize: 9 } }
         ],
         series: seriesPrice
       }, true);
 
-      // 图表 2: 向量化因子走势图
+      // 图表 2: 向量化因子走势
       const fDom = document.getElementById('chart-index-factors');
       if (!idxFactorChart) idxFactorChart = echarts.init(fDom);
       const fEntries = Object.entries(mkt.factors || {});
       idxFactorChart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis' },
-        legend: { textStyle: { color: '#94a3b8', fontSize: 11 } },
-        grid: { left: 50, right: 30, top: 35, bottom: 25 },
-        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 10 } },
-        yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 10 } },
+        tooltip: { trigger: 'axis', confine: true },
+        legend: { textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
+        grid: { left: 40, right: 15, top: 25, bottom: 20 },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 9 } },
+        yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 9 } },
         series: fEntries.map(([fid, vals]) => ({
           name: FACTOR_LABELS[fid] || fid,
           type: 'line',
           data: vals,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: fid.includes('pe_percentile') ? 2.2 : 1.5 }
+          lineStyle: { width: fid.includes('pe_percentile') ? 2 : 1.4 }
         }))
       }, true);
 
-      // 最近 30 交易日明细表
+      // 明细表
       const tbody = document.getElementById('idx-recent-rows-body');
       tbody.innerHTML = (mkt.recent_rows || []).map(r => `
         <tr class="hover:bg-slate-800/40">
-          <td class="py-1.5 px-3 text-emerald-400">${r.trade_date}</td>
-          <td class="py-1.5 px-3 text-blue-400 font-semibold">${r.symbol}</td>
-          <td class="py-1.5 px-3 text-right font-bold text-white">${r.close != null ? Number(r.close).toFixed(2) : '-'}</td>
-          <td class="py-1.5 px-3 text-right ${getTrendColor(r.change_pct)}">${r.change_pct != null ? (r.change_pct > 0 ? '+' : '') + Number(r.change_pct).toFixed(2) + '%' : '-'}</td>
-          <td class="py-1.5 px-3 text-right text-amber-300 font-semibold">${r.pe != null ? Number(r.pe).toFixed(2) : '-'}</td>
-          <td class="py-1.5 px-3 text-right text-cyan-300 font-semibold">${r.pe_percentile_10y != null ? Number(r.pe_percentile_10y).toFixed(2) + '%' : '-'}</td>
-          <td class="py-1.5 px-3 text-right text-slate-300">${r.pb != null ? Number(r.pb).toFixed(2) : '-'}</td>
-          <td class="py-1.5 px-3 text-right text-emerald-400">${r.dividend_yield != null ? Number(r.dividend_yield).toFixed(2) + '%' : '-'}</td>
+          <td class="py-1 px-2.5 text-emerald-400">${r.trade_date}</td>
+          <td class="py-1 px-2.5 text-blue-400 font-semibold">${r.symbol}</td>
+          <td class="py-1 px-2.5 text-right font-bold text-white">${r.close != null ? Number(r.close).toFixed(2) : '-'}</td>
+          <td class="py-1 px-2.5 text-right ${getTrendColor(r.change_pct)}">${r.change_pct != null ? (r.change_pct > 0 ? '+' : '') + Number(r.change_pct).toFixed(2) + '%' : '-'}</td>
+          <td class="py-1 px-2.5 text-right text-amber-300 font-semibold">${r.pe != null ? Number(r.pe).toFixed(2) : '-'}</td>
+          <td class="py-1 px-2.5 text-right text-cyan-300 font-semibold">${r.pe_percentile_10y != null ? Number(r.pe_percentile_10y).toFixed(2) + '%' : '-'}</td>
+          <td class="py-1 px-2.5 text-right text-slate-300">${r.pb != null ? Number(r.pb).toFixed(2) : '-'}</td>
+          <td class="py-1 px-2.5 text-right text-emerald-400">${r.dividend_yield != null ? Number(r.dividend_yield).toFixed(2) + '%' : '-'}</td>
         </tr>
       `).join('');
     }
@@ -1303,19 +1320,19 @@
     }
 
     // =========================================================================
-    // TAB 3: ETF 动量看板 (ETF Momentum & Trading Hub) - 重点实现
+    // TAB 3: ETF 动量看板 (ETF Momentum & Trading Hub)
     // =========================================================================
     let currentEtfCategory = 'all';
 
     function initEtfs() {
-      // 渲染 ETF 芯片
+      // 渲染 ETF 芯片 (横向滑动)
       const chipsEl = document.getElementById('etf-chips-container');
       chipsEl.innerHTML = '';
       const etfList = (bundle.asset_meta || []).filter(a => a.asset_type === 'etf');
       etfList.forEach(eMeta => {
         const btn = document.createElement('button');
         btn.id = 'chip-etf-' + eMeta.symbol.replace('.', '_');
-        btn.className = `chip-btn px-2.5 py-1 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white transition ${eMeta.symbol === currentEtfSymbol ? 'active' : ''}`;
+        btn.className = `chip-btn px-2.5 py-1 rounded-lg text-xs border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white shrink-0 transition ${eMeta.symbol === currentEtfSymbol ? 'active' : ''}`;
         btn.textContent = eMeta.name;
         btn.onclick = () => renderEtfSymbol(eMeta.symbol);
         chipsEl.appendChild(btn);
@@ -1350,24 +1367,20 @@
       const chg20d = (latestClose && close20d) ? ((latestClose - close20d) / close20d * 100) : null;
       const chg60d = (latestClose && close60d) ? ((latestClose - close60d) / close60d * 100) : null;
 
-      // 动量因子与波动率因子
       const ret20Factor = (mkt.factors || {}).ret_20d || [];
       const latestRet20 = ret20Factor.length ? ret20Factor[ret20Factor.length - 1] : chg20d;
 
       const vol30Factor = (mkt.factors || {}).vol_30d || [];
       const latestVol30 = vol30Factor.length ? vol30Factor[vol30Factor.length - 1] : null;
 
-      // 均线 MA20 与 MA60
       const ma20Arr = calcMA(closes, 20);
       const latestMa20 = ma20Arr.length ? ma20Arr[ma20Arr.length - 1] : null;
       const ma60Arr = calcMA(closes, 60);
       const latestMa60 = ma60Arr.length ? ma60Arr[ma60Arr.length - 1] : null;
 
-      // 52周最高点与回撤
       const max250 = closes.length ? Math.max(...closes) : latestClose;
       const distHigh = (latestClose && max250) ? ((latestClose - max250) / max250 * 100) : 0;
 
-      // 均线与动量状态
       let maTrend = { label: '震荡观望', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
       if (latestClose && latestMa20 && latestMa60) {
         if (latestClose >= latestMa20 && latestMa20 >= latestMa60) {
@@ -1381,7 +1394,6 @@
         }
       }
 
-      // 寻找对应的基准指数
       const underlyingIdx = (bundle.asset_meta || []).find(a => a.asset_type === 'index' && a.trade_etf === sym);
 
       return {
@@ -1412,13 +1424,12 @@
       const sortedByMom = [...dataList].sort((a, b) => (b.chg_20d || -999) - (a.chg_20d || -999)).slice(0, 3);
       const momEl = document.getElementById('etf-top-momentum');
       momEl.innerHTML = sortedByMom.map((it, idx) => `
-        <div class="flex items-center justify-between p-1.5 rounded bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700" onclick="renderEtfSymbol('${it.symbol}')">
-          <div class="flex items-center gap-2">
-            <span class="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[10px] flex items-center justify-center font-bold">${idx + 1}</span>
-            <span class="text-white font-medium">${it.name}</span>
-            <span class="text-[10px] text-slate-500 font-mono">${it.symbol}</span>
+        <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer active:scale-98" onclick="renderEtfSymbol('${it.symbol}')">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="w-3.5 h-3.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[9px] flex items-center justify-center font-bold shrink-0">${idx + 1}</span>
+            <span class="text-white font-medium truncate">${it.name}</span>
           </div>
-          <span class="font-mono font-bold ${getTrendColor(it.chg_20d)}">${it.chg_20d != null ? (it.chg_20d > 0 ? '+' : '') + Number(it.chg_20d).toFixed(2) + '%' : '-'}</span>
+          <span class="font-mono font-bold ${getTrendColor(it.chg_20d)} shrink-0">${it.chg_20d != null ? (it.chg_20d > 0 ? '+' : '') + Number(it.chg_20d).toFixed(2) + '%' : '-'}</span>
         </div>
       `).join('');
 
@@ -1426,13 +1437,12 @@
       const sortedByVol = [...dataList].filter(it => it.vol_30d != null).sort((a, b) => a.vol_30d - b.vol_30d).slice(0, 3);
       const volEl = document.getElementById('etf-low-vol');
       volEl.innerHTML = sortedByVol.map((it, idx) => `
-        <div class="flex items-center justify-between p-1.5 rounded bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700" onclick="renderEtfSymbol('${it.symbol}')">
-          <div class="flex items-center gap-2">
-            <span class="w-4 h-4 rounded-full bg-blue-500/20 text-blue-400 font-mono text-[10px] flex items-center justify-center font-bold">${idx + 1}</span>
-            <span class="text-white font-medium">${it.name}</span>
-            <span class="text-[10px] text-slate-500 font-mono">${it.symbol}</span>
+        <div class="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer active:scale-98" onclick="renderEtfSymbol('${it.symbol}')">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 font-mono text-[9px] flex items-center justify-center font-bold shrink-0">${idx + 1}</span>
+            <span class="text-white font-medium truncate">${it.name}</span>
           </div>
-          <span class="font-mono font-bold text-blue-300">${it.vol_30d != null ? Number(it.vol_30d).toFixed(2) + '%' : '-'}</span>
+          <span class="font-mono font-bold text-blue-300 shrink-0">${it.vol_30d != null ? Number(it.vol_30d).toFixed(2) + '%' : '-'}</span>
         </div>
       `).join('');
 
@@ -1445,17 +1455,17 @@
 
       const trendEl = document.getElementById('etf-trend-breadth');
       trendEl.innerHTML = `
-        <div class="space-y-1.5">
-          <div class="flex items-center justify-between">
-            <span class="text-slate-400">站上 20日月均线(MA20):</span>
-            <span class="font-mono font-bold text-emerald-400">${aboveMa20} / ${total} (${pctMa20}%)</span>
+        <div class="space-y-1">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-slate-400">站上 20日月线(MA20):</span>
+            <span class="font-mono font-bold text-emerald-400">${aboveMa20}/${total} (${pctMa20}%)</span>
           </div>
           <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
             <div class="bg-emerald-500 h-full" style="width: ${pctMa20}%"></div>
           </div>
-          <div class="flex items-center justify-between pt-1">
-            <span class="text-slate-400">站上 60日季均线(MA60):</span>
-            <span class="font-mono font-bold text-blue-400">${aboveMa60} / ${total} (${pctMa60}%)</span>
+          <div class="flex items-center justify-between text-[11px] pt-0.5">
+            <span class="text-slate-400">站上 60日季线(MA60):</span>
+            <span class="font-mono font-bold text-blue-400">${aboveMa60}/${total} (${pctMa60}%)</span>
           </div>
           <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
             <div class="bg-blue-500 h-full" style="width: ${pctMa60}%"></div>
@@ -1474,7 +1484,7 @@
         list = list.filter(a => allowed.includes(a.symbol));
       }
 
-      const q = (document.getElementById('etf-search-input').value || '').trim().toLowerCase();
+      const q = ((document.getElementById('etf-search-input') && document.getElementById('etf-search-input').value) || '').trim().toLowerCase();
       if (q) {
         list = list.filter(a => a.symbol.toLowerCase().includes(q) || a.name.toLowerCase().includes(q));
       }
@@ -1496,39 +1506,38 @@
         tr.className = 'hover:bg-slate-800/50 cursor-pointer transition';
         tr.onclick = () => renderEtfSymbol(d.symbol);
 
-        // 动量评级药丸
-        let momBadge = '<span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px]">观察</span>';
+        let momBadge = '<span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[9px] font-sans">观察</span>';
         if (d.chg_20d != null) {
           if (d.chg_20d > 5 && d.close && d.ma20 && d.close >= d.ma20) {
-            momBadge = '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">强劲进攻 🚀</span>';
+            momBadge = '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold font-sans">进攻 🚀</span>';
           } else if (d.chg_20d > 0) {
-            momBadge = '<span class="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[10px]">温和走强 📈</span>';
+            momBadge = '<span class="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[9px] font-sans">偏强 📈</span>';
           } else if (d.symbol.includes('5110') || d.symbol.includes('5188')) {
-            momBadge = '<span class="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px]">防守配置 🛡️</span>';
+            momBadge = '<span class="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] font-sans">防御 🛡️</span>';
           } else {
-            momBadge = '<span class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px]">动量偏弱 📉</span>';
+            momBadge = '<span class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-sans">偏弱 📉</span>';
           }
         }
 
         tr.innerHTML = `
-          <td class="py-2.5 px-3 font-mono font-bold text-amber-400">${d.symbol}</td>
-          <td class="py-2.5 px-3 text-white font-medium">${d.name}</td>
-          <td class="py-2.5 px-3">
-            ${d.underlying_symbol ? `<button onclick="event.stopPropagation(); jumpToIndex('${d.underlying_symbol}')" class="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 font-mono">${d.underlying_name} 🔍</button>` : '<span class="text-slate-500">-</span>'}
+          <td class="py-2 px-2.5 font-mono font-bold text-amber-400">${d.symbol}</td>
+          <td class="py-2 px-2.5 text-white font-medium font-sans">${d.name}</td>
+          <td class="py-2 px-2.5">
+            ${d.underlying_symbol ? `<button onclick="event.stopPropagation(); jumpToIndex('${d.underlying_symbol}')" class="text-blue-400 hover:text-blue-300 flex items-center gap-0.5 font-mono">${d.underlying_name} 🔍</button>` : '<span class="text-slate-500">-</span>'}
           </td>
-          <td class="py-2.5 px-3 text-right font-mono font-bold text-white">${d.close != null ? Number(d.close).toFixed(3) : '-'}</td>
-          <td class="py-2.5 px-3 text-right">${getTrendBadge(d.chg_1d)}</td>
-          <td class="py-2.5 px-3 text-right font-mono ${getTrendColor(d.chg_5d)}">${d.chg_5d != null ? (d.chg_5d > 0 ? '+' : '') + Number(d.chg_5d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono font-bold ${getTrendColor(d.chg_20d)}">${d.chg_20d != null ? (d.chg_20d > 0 ? '+' : '') + Number(d.chg_20d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono ${getTrendColor(d.chg_60d)}">${d.chg_60d != null ? (d.chg_60d > 0 ? '+' : '') + Number(d.chg_60d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-blue-300 font-semibold">${d.vol_30d != null ? Number(d.vol_30d).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-center">
-            <span class="px-2 py-0.5 rounded-full border ${d.ma_trend.color} text-[10px] font-medium">${d.ma_trend.label}</span>
+          <td class="py-2 px-2.5 text-right font-mono font-bold text-white">${d.close != null ? Number(d.close).toFixed(3) : '-'}</td>
+          <td class="py-2 px-2.5 text-right">${getTrendBadge(d.chg_1d)}</td>
+          <td class="py-2 px-2.5 text-right font-mono ${getTrendColor(d.chg_5d)}">${d.chg_5d != null ? (d.chg_5d > 0 ? '+' : '') + Number(d.chg_5d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono font-bold ${getTrendColor(d.chg_20d)}">${d.chg_20d != null ? (d.chg_20d > 0 ? '+' : '') + Number(d.chg_20d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono ${getTrendColor(d.chg_60d)}">${d.chg_60d != null ? (d.chg_60d > 0 ? '+' : '') + Number(d.chg_60d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-blue-300 font-semibold">${d.vol_30d != null ? Number(d.vol_30d).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-center">
+            <span class="px-1.5 py-0.5 rounded-full border ${d.ma_trend.color} text-[9px] font-sans">${d.ma_trend.label}</span>
           </td>
-          <td class="py-2.5 px-3 text-right font-mono text-slate-400">${d.dist_high != null ? Number(d.dist_high).toFixed(1) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-center">${momBadge}</td>
-          <td class="py-2.5 px-3 text-center">
-            <button onclick="event.stopPropagation(); renderEtfSymbol('${d.symbol}')" class="px-2 py-1 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white transition text-[11px]">透视</button>
+          <td class="py-2 px-2.5 text-right font-mono text-slate-400">${d.dist_high != null ? Number(d.dist_high).toFixed(1) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-center">${momBadge}</td>
+          <td class="py-2 px-2.5 text-center">
+            <button onclick="event.stopPropagation(); renderEtfSymbol('${d.symbol}')" class="px-2 py-0.5 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white transition text-[10px]">透视</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -1544,16 +1553,17 @@
       const d = getEtfDataSummary(symbol);
       const badge = document.getElementById('etf-badge-stats');
       badge.innerHTML = `
-        <span class="text-white font-bold">${d.name} (${d.symbol})</span>
-        <span class="text-slate-400 mx-1">|</span>
-        最新市价: <span class="text-white font-bold">${d.close != null ? Number(d.close).toFixed(3) : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
-        今日涨跌: <span class="${getTrendColor(d.chg_1d)} font-bold">${d.chg_1d != null ? (d.chg_1d > 0 ? '+' : '') + Number(d.chg_1d).toFixed(2) + '%' : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
+        <span class="text-white font-bold">${d.name}</span>
+        <span class="text-slate-400 font-mono text-[11px]">(${d.symbol})</span>
+        <span class="text-slate-500">·</span>
+        最新价: <span class="text-white font-bold">${d.close != null ? Number(d.close).toFixed(3) : '-'}</span>
+        <span class="text-slate-500">·</span>
+        今日: <span class="${getTrendColor(d.chg_1d)} font-bold">${d.chg_1d != null ? (d.chg_1d > 0 ? '+' : '') + Number(d.chg_1d).toFixed(2) + '%' : '-'}</span>
+        <span class="text-slate-500">·</span>
         20日动量: <span class="${getTrendColor(d.chg_20d)} font-bold">${d.chg_20d != null ? (d.chg_20d > 0 ? '+' : '') + Number(d.chg_20d).toFixed(2) + '%' : '-'}</span>
-        <span class="text-slate-400 mx-1">|</span>
-        30日波动率: <span class="text-blue-300 font-bold">${d.vol_30d != null ? Number(d.vol_30d).toFixed(2) + '%' : '-'}</span>
-        <span class="ml-2 px-2 py-0.5 rounded-full border ${d.ma_trend.color} text-[11px]">${d.ma_trend.label}</span>
+        <span class="text-slate-500">·</span>
+        30日波动: <span class="text-blue-300 font-bold">${d.vol_30d != null ? Number(d.vol_30d).toFixed(2) + '%' : '-'}</span>
+        <span class="px-2 py-0.5 rounded-full border ${d.ma_trend.color} text-[10px] ml-auto">${d.ma_trend.label}</span>
       `;
 
       const mkt = (bundle.markets || {})[symbol] || {};
@@ -1567,33 +1577,33 @@
       if (!etfPriceMaChart) etfPriceMaChart = echarts.init(pDom);
       etfPriceMaChart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis' },
-        legend: { data: ['收盘价', 'MA20 (月线)', 'MA60 (季线)'], textStyle: { color: '#94a3b8', fontSize: 11 } },
-        grid: { left: 55, right: 35, top: 35, bottom: 25 },
-        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 10 } },
-        yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 10 } },
+        tooltip: { trigger: 'axis', confine: true },
+        legend: { data: ['收盘价', 'MA20', 'MA60'], textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
+        grid: { left: 45, right: 15, top: 25, bottom: 20 },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 9 } },
+        yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8', fontSize: 9 } },
         series: [
           {
             name: '收盘价',
             type: 'line',
             data: closeArr,
             showSymbol: false,
-            lineStyle: { width: 2, color: '#f8fafc' },
+            lineStyle: { width: 1.8, color: '#f8fafc' },
             areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(248, 250, 252, 0.15)' }, { offset: 1, color: 'rgba(248, 250, 252, 0.0)' }]) }
           },
           {
-            name: 'MA20 (月线)',
+            name: 'MA20',
             type: 'line',
             data: ma20Arr,
             showSymbol: false,
-            lineStyle: { width: 1.8, color: '#f59e0b' }
+            lineStyle: { width: 1.5, color: '#f59e0b' }
           },
           {
-            name: 'MA60 (季线)',
+            name: 'MA60',
             type: 'line',
             data: ma60Arr,
             showSymbol: false,
-            lineStyle: { width: 1.8, color: '#a855f7' }
+            lineStyle: { width: 1.5, color: '#a855f7' }
           }
         ]
       }, true);
@@ -1606,13 +1616,13 @@
 
       etfMomVolChart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis' },
-        legend: { data: ['20日动量 (%)', '30日波动率 (%)'], textStyle: { color: '#94a3b8', fontSize: 11 } },
-        grid: { left: 50, right: 50, top: 35, bottom: 25 },
-        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 10 } },
+        tooltip: { trigger: 'axis', confine: true },
+        legend: { data: ['20日动量 (%)', '30日波动率 (%)'], textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
+        grid: { left: 40, right: 35, top: 25, bottom: 20 },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#64748b', fontSize: 9 } },
         yAxis: [
-          { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#10b981', fontSize: 10, formatter: '{value}%' } },
-          { type: 'value', splitLine: { show: false }, axisLabel: { color: '#f97316', fontSize: 10, formatter: '{value}%' } }
+          { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#10b981', fontSize: 9, formatter: '{value}%' } },
+          { type: 'value', splitLine: { show: false }, axisLabel: { color: '#f97316', fontSize: 9, formatter: '{value}%' } }
         ],
         series: [
           {
@@ -1637,12 +1647,12 @@
             yAxisIndex: 1,
             data: vol30Data,
             showSymbol: false,
-            lineStyle: { width: 2, color: '#f97316' }
+            lineStyle: { width: 1.8, color: '#f97316' }
           }
         ]
       }, true);
 
-      // 最近 30 交易日明细
+      // 明细表
       const rBody = document.getElementById('etf-recent-rows-body');
       rBody.innerHTML = (mkt.recent_rows || []).map((r, i) => {
         const c = r.close;
@@ -1654,14 +1664,14 @@
 
         return `
           <tr class="hover:bg-slate-800/40">
-            <td class="py-1.5 px-3 text-emerald-400">${r.trade_date}</td>
-            <td class="py-1.5 px-3 text-amber-400 font-semibold">${r.symbol}</td>
-            <td class="py-1.5 px-3 text-right font-bold text-white">${c != null ? Number(c).toFixed(3) : '-'}</td>
-            <td class="py-1.5 px-3 text-right ${getTrendColor(r.change_pct)}">${r.change_pct != null ? (r.change_pct > 0 ? '+' : '') + Number(r.change_pct).toFixed(2) + '%' : '-'}</td>
-            <td class="py-1.5 px-3 text-right text-amber-300">${ma20Val}</td>
-            <td class="py-1.5 px-3 text-right text-purple-300">${ma60Val}</td>
-            <td class="py-1.5 px-3 text-right font-bold ${getTrendColor(r20)}">${r20 != null ? (r20 > 0 ? '+' : '') + Number(r20).toFixed(2) + '%' : '-'}</td>
-            <td class="py-1.5 px-3 text-right text-blue-300">${v30 != null ? Number(v30).toFixed(2) + '%' : '-'}</td>
+            <td class="py-1 px-2.5 text-emerald-400">${r.trade_date}</td>
+            <td class="py-1 px-2.5 text-amber-400 font-semibold">${r.symbol}</td>
+            <td class="py-1 px-2.5 text-right font-bold text-white">${c != null ? Number(c).toFixed(3) : '-'}</td>
+            <td class="py-1 px-2.5 text-right ${getTrendColor(r.change_pct)}">${r.change_pct != null ? (r.change_pct > 0 ? '+' : '') + Number(r.change_pct).toFixed(2) + '%' : '-'}</td>
+            <td class="py-1 px-2.5 text-right text-amber-300">${ma20Val}</td>
+            <td class="py-1 px-2.5 text-right text-purple-300">${ma60Val}</td>
+            <td class="py-1 px-2.5 text-right font-bold ${getTrendColor(r20)}">${r20 != null ? (r20 > 0 ? '+' : '') + Number(r20).toFixed(2) + '%' : '-'}</td>
+            <td class="py-1 px-2.5 text-right text-blue-300">${v30 != null ? Number(v30).toFixed(2) + '%' : '-'}</td>
           </tr>
         `;
       }).join('');
@@ -1672,17 +1682,15 @@
       const compDom = document.getElementById('chart-etf-comparison');
       if (!etfCompChart) etfCompChart = echarts.init(compDom);
 
-      // 对比代表性资产: 沪深300ETF, 创业板ETF, 纳指ETF, 标普500ETF, 黄金ETF, 国债ETF
       const coreEtfs = [
-        { sym: '510300.SH', name: '沪深300ETF', color: '#38bdf8' },
-        { sym: '159915.SZ', name: '创业板ETF', color: '#ec4899' },
-        { sym: '513100.SH', name: '纳指ETF', color: '#10b981' },
-        { sym: '513500.SH', name: '标普500ETF', color: '#6366f1' },
-        { sym: '518880.SH', name: '黄金ETF', color: '#f59e0b' },
-        { sym: '511010.SH', name: '国债ETF', color: '#94a3b8' }
+        { sym: '510300.SH', name: '沪深300', color: '#38bdf8' },
+        { sym: '159915.SZ', name: '创业板', color: '#ec4899' },
+        { sym: '513100.SH', name: '纳指', color: '#10b981' },
+        { sym: '513500.SH', name: '标普', color: '#6366f1' },
+        { sym: '518880.SH', name: '黄金', color: '#f59e0b' },
+        { sym: '511010.SH', name: '国债', color: '#94a3b8' }
       ];
 
-      // 对齐共同日期轴
       const baseDates = ((bundle.markets || {})['510300.SH'] || {}).dates || [];
       const seriesList = [];
 
@@ -1699,7 +1707,7 @@
           data: normValues,
           showSymbol: false,
           smooth: true,
-          lineStyle: { width: item.sym === currentEtfSymbol ? 3 : 1.8, color: item.color }
+          lineStyle: { width: item.sym === currentEtfSymbol ? 2.5 : 1.5, color: item.color }
         });
       });
 
@@ -1707,13 +1715,14 @@
         backgroundColor: 'transparent',
         tooltip: {
           trigger: 'axis',
+          confine: true,
           formatter: function(params) {
-            let res = `<div class="font-bold border-b border-slate-700 pb-1 mb-1">${params[0].name} (基准 = 100)</div>`;
+            let res = `<div class="font-bold border-b border-slate-700 pb-1 mb-1 text-xs">${params[0].name} (基准=100)</div>`;
             params.forEach(p => {
-              const diff = (p.value - 100).toFixed(2);
+              const diff = (p.value - 100).toFixed(1);
               const sign = diff >= 0 ? '+' : '';
               const colorCls = diff >= 0 ? '#f43f5e' : '#10b981';
-              res += `<div class="flex items-center justify-between gap-4 py-0.5">
+              res += `<div class="flex items-center justify-between gap-3 text-[11px] py-0.2">
                 <span>${p.marker} ${p.seriesName}</span>
                 <span class="font-mono font-bold">${p.value} <span style="color:${colorCls}">(${sign}${diff}%)</span></span>
               </div>`;
@@ -1721,14 +1730,14 @@
             return res;
           }
         },
-        legend: { textStyle: { color: '#94a3b8', fontSize: 11 }, top: 5 },
-        grid: { left: 55, right: 30, top: 40, bottom: 25 },
-        xAxis: { type: 'category', data: baseDates, axisLabel: { color: '#64748b', fontSize: 10 } },
+        legend: { textStyle: { color: '#94a3b8', fontSize: 10 }, top: 0 },
+        grid: { left: 40, right: 15, top: 30, bottom: 20 },
+        xAxis: { type: 'category', data: baseDates, axisLabel: { color: '#64748b', fontSize: 9 } },
         yAxis: {
           type: 'value',
           scale: true,
           splitLine: { lineStyle: { color: '#1e293b' } },
-          axisLabel: { color: '#94a3b8', fontSize: 10 }
+          axisLabel: { color: '#94a3b8', fontSize: 9 }
         },
         series: seriesList
       }, true);
@@ -1767,18 +1776,17 @@
         tr.className = 'hover:bg-slate-800/60 cursor-pointer transition';
 
         let badgeType = '';
-        if (a.asset_type === 'index') badgeType = '<span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px]">指数</span>';
-        else if (a.asset_type === 'etf') badgeType = '<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px]">场内ETF</span>';
-        else if (a.asset_type === 'bond') badgeType = '<span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px]">债券</span>';
-        else if (a.asset_type === 'gold') badgeType = '<span class="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 text-[10px]">黄金</span>';
-        else if (a.asset_type === 'macro') badgeType = '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">宏观温度计</span>';
+        if (a.asset_type === 'index') badgeType = '<span class="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[9px] font-sans">指数</span>';
+        else if (a.asset_type === 'etf') badgeType = '<span class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-sans">ETF</span>';
+        else if (a.asset_type === 'bond') badgeType = '<span class="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-sans">债券</span>';
+        else if (a.asset_type === 'gold') badgeType = '<span class="px-1.5 py-0.2 rounded bg-yellow-500/20 text-yellow-300 text-[9px] font-sans">黄金</span>';
+        else if (a.asset_type === 'macro') badgeType = '<span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-sans">宏观</span>';
 
-        // 快捷入口按钮
         let actionBtn = '-';
         if (a.asset_type === 'index') {
-          actionBtn = `<button onclick="jumpToIndex('${a.symbol}')" class="px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white transition text-[11px]">估值透视</button>`;
+          actionBtn = `<button onclick="jumpToIndex('${a.symbol}')" class="px-2 py-0.5 rounded bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white transition text-[10px]">估值</button>`;
         } else if (a.asset_type === 'etf') {
-          actionBtn = `<button onclick="jumpToEtf('${a.symbol}')" class="px-2 py-0.5 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white transition text-[11px]">动量透视</button>`;
+          actionBtn = `<button onclick="jumpToEtf('${a.symbol}')" class="px-2 py-0.5 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-300 hover:text-white transition text-[10px]">动量</button>`;
         }
 
         tr.onclick = () => {
@@ -1787,18 +1795,18 @@
         };
 
         tr.innerHTML = `
-          <td class="py-2.5 px-3 font-mono font-semibold text-blue-400">${a.symbol}</td>
-          <td class="py-2.5 px-3 text-white font-medium">${a.name}</td>
-          <td class="py-2.5 px-3">${badgeType}</td>
-          <td class="py-2.5 px-3 font-mono text-slate-300">${a.market}</td>
-          <td class="py-2.5 px-3 font-mono text-slate-400">${a.trade_etf || '-'}</td>
-          <td class="py-2.5 px-3 font-mono text-emerald-400">${a.latest_date || '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-white font-bold">${a.latest_price != null ? Number(a.latest_price).toFixed(3) : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-amber-300">${a.latest_pe != null ? Number(a.latest_pe).toFixed(2) : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-cyan-300">${latestPePct != null ? Number(latestPePct).toFixed(1) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono font-bold ${getTrendColor(latestRet20)}">${latestRet20 != null ? (latestRet20 > 0 ? '+' : '') + Number(latestRet20).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-right font-mono text-blue-300">${latestVol30 != null ? Number(latestVol30).toFixed(2) + '%' : '-'}</td>
-          <td class="py-2.5 px-3 text-center">${actionBtn}</td>
+          <td class="py-2 px-2.5 font-mono font-semibold text-blue-400">${a.symbol}</td>
+          <td class="py-2 px-2.5 text-white font-medium font-sans">${a.name}</td>
+          <td class="py-2 px-2.5">${badgeType}</td>
+          <td class="py-2 px-2.5 font-mono text-slate-300 text-[10px]">${a.market}</td>
+          <td class="py-2 px-2.5 font-mono text-slate-400">${a.trade_etf || '-'}</td>
+          <td class="py-2 px-2.5 font-mono text-emerald-400">${a.latest_date || '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-white font-bold">${a.latest_price != null ? Number(a.latest_price).toFixed(3) : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-amber-300">${a.latest_pe != null ? Number(a.latest_pe).toFixed(2) : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-cyan-300">${latestPePct != null ? Number(latestPePct).toFixed(1) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono font-bold ${getTrendColor(latestRet20)}">${latestRet20 != null ? (latestRet20 > 0 ? '+' : '') + Number(latestRet20).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-right font-mono text-blue-300">${latestVol30 != null ? Number(latestVol30).toFixed(2) + '%' : '-'}</td>
+          <td class="py-2 px-2.5 text-center">${actionBtn}</td>
         `;
         tbody.appendChild(tr);
       });
