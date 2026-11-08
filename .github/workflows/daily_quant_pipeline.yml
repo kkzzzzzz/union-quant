@@ -3,7 +3,7 @@ name: Daily Quant Data & Strategy Signal Pipeline
 on:
   # 定时运行 (UTC 时间)：
   # 1. 每个交易日 UTC 14:30 (北京时间 22:30)：A股/港股收盘及好买估值更新后拉取并算信号
-  # 2. 每个交易日 UTC 23:30 (北京时间次日 07:30)：美股(NDX/SPX)收盘后盘前更新并发布最新 GitHub Pages
+  # 2. 每个交易日 UTC 23:30 (北京时间次日 07:30)：美股(NDX/SPX)收盘后盘前更新并自动触发 Vercel 部署
   schedule:
     - cron: '30 14 * * 1-5'
     - cron: '30 23 * * 1-5'
@@ -25,22 +25,17 @@ on:
         default: true
         type: boolean
 
-# 赋予构建并部署 GitHub Pages 及回写 site/ 静态数据的权限（供 Vercel 自动部署）
+# 赋予回写 site/ 静态数据的权限（供 Vercel 自动部署）
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
-  group: "pages-quant-pipeline"
+  group: "daily-quant-pipeline"
   cancel-in-progress: false
 
 jobs:
-  run-quant-and-deploy-pages:
+  run-quant-and-deploy-vercel:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -82,11 +77,11 @@ jobs:
             python cli.py signal --all --mode live
           fi
 
-      - name: 6. Build Static GitHub Pages & Vercel Dashboard (site/)
+      - name: 6. Build Static Vercel Dashboard (site/)
         run: |
           python cli.py export-pages --out-dir site
 
-      - name: 6.1 Commit Updated site/ to Main Branch (Triggers Vercel Auto-Deploy)
+      - name: 7. Commit Updated site/ to Main Branch (Triggers Vercel Auto-Deploy)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -95,15 +90,3 @@ jobs:
             git commit -m "chore(site): update daily quant dashboard data"
             git push origin HEAD:main
           fi
-
-      - name: 7. Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: 8. Upload GitHub Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './site'
-
-      - name: 9. Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4

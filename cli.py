@@ -271,7 +271,7 @@ def cmd_export_pages(args: argparse.Namespace) -> int:
     from core.pages_builder import build_static_pages
 
     out_path = build_static_pages(out_dir=Path(args.out_dir))
-    print(f"[GitHub Pages 静态站点生成完成] 输出目录: {out_path.resolve()}")
+    print(f"[Vercel 静态看板站点生成完成] 输出目录: {out_path.resolve()}")
     return 0
 
 
@@ -361,7 +361,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # export-pages
     p_exp = sub.add_parser(
-        "export-pages", help="生成纯静态 GitHub Pages 每日信号与行情看板 (site/)"
+        "export-pages",
+        aliases=["export-site"],
+        help="生成纯静态 Vercel 每日信号与行情看板 (site/)",
     )
     p_exp.add_argument("--out-dir", default="site", help="静态站点输出目录")
     p_exp.set_defaults(func=cmd_export_pages)

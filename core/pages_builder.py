@@ -1,5 +1,5 @@
 """
-GitHub Pages 静态每日信号与行情看板生成器 (Static GitHub Pages Builder).
+Vercel 纯静态每日信号与行情看板生成器 (Static Dashboard Builder for Vercel).
 
 调用方式：
   python cli.py export-pages --out-dir site
@@ -7,7 +7,7 @@ GitHub Pages 静态每日信号与行情看板生成器 (Static GitHub Pages Bui
 生成内容：
 - `site/data.json`: 包含全部 6 个策略的最新每日信号、单资产因子诊断明细、历史净值与回撤序列、调仓记录，
   以及全部 24 个标的的最新行情、估值与近期因子走势。
-- `site/index.html`: 纯静态、自适应手机与电脑端的每日信号看板（无需后端服务器即可在 GitHub Pages 直接打开）。
+- `site/index.html`: 纯静态、自适应手机与电脑端的每日信号看板（由 Vercel 静态托管并自动发布）。
 """
 
 from __future__ import annotations
@@ -155,7 +155,6 @@ def build_static_pages(
 
     index_html_path = out_dir / "index.html"
     index_html_path.write_text(STATIC_PAGES_HTML, encoding="utf-8")
-    (out_dir / ".nojekyll").write_text("", encoding="utf-8")
     return out_dir
 
 
@@ -183,7 +182,7 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
         <div>
           <h1 class="text-base font-bold text-white flex items-center gap-2">
             Union Quant 每日量化信号看板
-            <span class="text-xs font-normal px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">GitHub Pages 自动更新</span>
+            <span class="text-xs font-normal px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Vercel 自动部署</span>
           </h1>
           <p id="gen-time-banner" class="text-xs text-slate-400 font-mono">正在加载最新快照...</p>
         </div>
