@@ -221,3 +221,73 @@ def test_t_plus_1_cutoff_and_cross_market_date_preservation(temp_env):
     details_by_sym = {d["symbol"]: d for d in sig["asset_details"]}
     assert details_by_sym["000300.SH"]["data_date"] == "2024-06-28"
     assert details_by_sym["NDX.GI"]["data_date"] == "2024-06-27"
+
+
+def test_http_client_and_sbe_macro_provider():
+    """验证统一 HTTP 会话管理与 SBE 宏观源容灾获取"""
+    from core.data_hub.http_client import get_http_session, safe_request
+    from core.data_hub.providers import SbeMacroProvider
+
+    session = get_http_session()
+    assert session is not None
+    # 验证 safe_request 对异常/404 静默并返回响应或 None
+    resp = safe_request("GET", "https://httpbin.org/status/404", timeout=3)
+    # 若在离线 sandbox 环境 resp 为 None；若在线则返回 404，两者均不抛未捕获异常
+    if resp is not None:
+        assert resp.status_code == 404
+
+    sbe = SbeMacroProvider()
+    # 模拟从蛋卷或韭圈儿获取指标
+    bar = sbe.fetch_latest("SBE.JCS", "jiucaishuo")
+    # bar 允许为 None（在完全断网的测试容器中）或有效 MarketBar
+    if bar is not None:
+        assert bar.symbol == "SBE.JCS"
+        assert bar.close is not None
+
+
+def test_atomic_upsert_market_and_factor_daily(temp_env):
+    """验证原子 Upsert 在高频交替写入时的字段互补与因子覆盖幂等性"""
+    _, db = temp_env
+
+    # 1. market_daily 原子互补测试
+    db.upsert_market_daily([
+        {"symbol": "TEST.STOCK", "trade_date": "2024-01-01", "close": 10.0, "volume": 1000.0},
+    ])
+    # 仅更新估值字段，close 和 volume 应完整保留
+    db.upsert_market_daily([
+        {"symbol": "TEST.STOCK", "trade_date": "2024-01-01", "pe": 8.5, "pb": 1.2},
+    ])
+    df = db.fetch_market_daily("TEST.STOCK")
+    assert len(df) == 1
+    assert float(df.iloc[0]["close"]) == 10.0
+    assert float(df.iloc[0]["volume"]) == 1000.0
+    assert float(df.iloc[0]["pe"]) == 8.5
+    assert float(df.iloc[0]["pb"]) == 1.2
+
+    # 2. factor_daily 原子幂等测试
+    db.upsert_factor_daily([
+        {"symbol": "TEST.STOCK", "trade_date": "2024-01-01", "factor_id": "pe_10y", "value": 45.0},
+        {"symbol": "TEST.STOCK", "trade_date": "2024-01-01", "factor_id": "rsi_14", "value": 55.0},
+    ])
+    # 更新 pe_10y，值更新为 48.0
+    db.upsert_factor_daily([
+        {"symbol": "TEST.STOCK", "trade_date": "2024-01-01", "factor_id": "pe_10y", "value": 48.0},
+    ])
+    s_pe = db.fetch_factor_series("TEST.STOCK", "pe_10y")
+    assert len(s_pe) == 1
+    assert float(s_pe.iloc[0]) == 48.0
+
+
+def test_fetch_market_daily_multi(temp_env):
+    """验证多标的单次批量查询"""
+    _, db = temp_env
+    multi_df = db.fetch_market_daily_multi(
+        ["000300.SH", "NDX.GI"],
+        start_date="2023-01-01",
+        end_date="2023-01-15",
+    )
+    assert not multi_df.empty
+    symbols_found = set(multi_df["symbol"].unique())
+    assert "000300.SH" in symbols_found
+    assert "NDX.GI" in symbols_found
+

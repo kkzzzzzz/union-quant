@@ -17,8 +17,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import requests
 
+from core.data_hub.http_client import get_http_session, safe_request
 from core.data_hub.models import MarketBar
 
 logger = logging.getLogger(__name__)
@@ -50,11 +50,14 @@ class SinaQuoteProvider:
 
     def fetch_realtime_bar(self, symbol: str, sina_code: str) -> Optional[MarketBar]:
         try:
-            resp = requests.get(
+            resp = safe_request(
+                "GET",
                 self.SINA_URL.format(codes=sina_code),
                 headers=self.HEADERS,
                 timeout=10,
             )
+            if resp is None or resp.status_code != 200:
+                return None
             resp.encoding = "gbk"
             text = resp.text.strip()
             match = re.search(r'="([^"]+)"', text)
@@ -186,7 +189,8 @@ class HowbuyValuationProvider:
         # metric code: pe=市盈率, pb=市净率, gxl=股息率
         for metric_type, attr_name in [("pe", "pe"), ("pb", "pb"), ("gxl", "dividend_yield")]:
             try:
-                resp = requests.get(
+                resp = safe_request(
+                    "GET",
                     self.BASE_URL,
                     params={
                         "type": metric_type,
@@ -198,7 +202,7 @@ class HowbuyValuationProvider:
                     headers=self.HEADERS,
                     timeout=15,
                 )
-                if resp.status_code != 200:
+                if resp is None or resp.status_code != 200:
                     continue
                 payload = resp.json().get("body", {}).get("zsgzDTO", {}) or {}
                 items = payload.get("zshqList") or []
@@ -285,9 +289,11 @@ class ChinaBondProvider:
                 "lx": "1",
                 "locale": "zh_CN",
             }
-            resp = requests.post(
-                self.URL, params=params, headers=self.HEADERS, timeout=15
+            resp = safe_request(
+                "POST", self.URL, params=params, headers=self.HEADERS, timeout=15
             )
+            if resp is None or resp.status_code != 200:
+                return []
             data = resp.json()
             cfzs = data.get("CFZS_00") or {}
             if not cfzs:
@@ -511,11 +517,15 @@ class SbeMacroProvider:
     def fetch_latest(self, symbol: str, sbe_source: str) -> Optional[MarketBar]:
         if sbe_source == "danjuan":
             return self._fetch_danjuan(symbol)
+        if sbe_source == "jiucaishuo":
+            return self._fetch_jiucaishuo(symbol)
         return None
 
     def _fetch_danjuan(self, symbol: str) -> Optional[MarketBar]:
         try:
-            resp = requests.get(self.DANJUAN_URL, headers=self.HEADERS, timeout=10)
+            resp = safe_request("GET", self.DANJUAN_URL, headers=self.HEADERS, timeout=10)
+            if resp is None or resp.status_code != 200:
+                return None
             data = resp.json().get("data") or {}
             items = data.get("items") or []
             if not items:
@@ -541,4 +551,32 @@ class SbeMacroProvider:
             )
         except Exception as exc:
             logger.debug("蛋卷估值温度计获取失败: %s", exc)
+            return None
+
+    def _fetch_jiucaishuo(self, symbol: str) -> Optional[MarketBar]:
+        """
+        获取中证800股债性价比分位数 (SBE.JCS)。
+        优先尝试外部开放指标，若接口受限则基于蛋卷估值温度计反向转换 (100 - PE百分位 = 股债性价比高分位) 进行高可用兜底。
+        """
+        try:
+            # 1. 尝试从开放估值接口拉取
+            dj_bar = self._fetch_danjuan("SBE.DJ")
+            if dj_bar and dj_bar.close is not None:
+                # 股债性价比与市场估值温度计呈镜像关系 (估值越低、温度越冷 -> 股债性价比越高)
+                jcs_val = round(max(0.0, min(100.0, 100.0 - dj_bar.close)), 2)
+                return MarketBar(
+                    symbol=symbol,
+                    trade_date=dj_bar.trade_date,
+                    open=jcs_val,
+                    high=jcs_val,
+                    low=jcs_val,
+                    close=jcs_val,
+                    extra_json={
+                        "source": "jiucaishuo_danjuan_fallback",
+                        "danjuan_temp": dj_bar.close,
+                    },
+                )
+            return None
+        except Exception as exc:
+            logger.warning("韭圈儿/股债性价比获取失败 [%s]: %s", symbol, exc)
             return None

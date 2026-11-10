@@ -322,25 +322,41 @@ class DataSyncService:
     ) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
         """
         加载多个标的的日线数据并对齐为收盘价矩阵 `prices_df` (index=DatetimeIndex, columns=symbols)。
-        同时返回每个标的各自的原始未强行截断 DataFrame 字典 `raw_frames`，
-        以确保跨市场资产在展示层保留各自真实的最新数据日期 (`<= end_date`)。
+        单次批量查询优化，同时保留各标的原始未强行截断的 DataFrame 字典 `raw_frames`。
         """
+        sym_list = list(symbols)
         raw_frames: Dict[str, pd.DataFrame] = {}
         close_series_map: Dict[str, pd.Series] = {}
 
-        for sym in symbols:
-            df = self.db.fetch_market_daily(
-                sym, start_date=start_date, end_date=end_date
-            )
+        if not sym_list:
+            return pd.DataFrame(), raw_frames
+
+        # 单次批量 SQL 载入
+        batch_df = self.db.fetch_market_daily_multi(
+            sym_list, start_date=start_date, end_date=end_date
+        )
+
+        for sym in sym_list:
+            if not batch_df.empty and "symbol" in batch_df.columns:
+                df = batch_df[batch_df["symbol"] == sym].copy()
+            else:
+                df = pd.DataFrame()
+
+            # 若本地仅有极少量增量且配置了远端 Supabase，回退拉取远端历史
+            if (len(df) < 100 and getattr(self.db, "is_remote_enabled", False)) or df.empty:
+                fallback_df = self.db.fetch_market_daily(
+                    sym, start_date=start_date, end_date=end_date
+                )
+                if len(fallback_df) > len(df):
+                    df = fallback_df
+
             if df.empty or "close" not in df.columns:
                 continue
             df = df.dropna(subset=["close"]).copy()
             if df.empty:
                 continue
             df["dt"] = pd.to_datetime(df["trade_date"])
-            df = df.drop_duplicates(subset=["dt"], keep="last").sort_values(
-                "dt"
-            )
+            df = df.drop_duplicates(subset=["dt"], keep="last").sort_values("dt")
             raw_frames[sym] = df
             close_series_map[sym] = pd.Series(
                 df["close"].values, index=df["dt"], name=sym

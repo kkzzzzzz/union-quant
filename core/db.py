@@ -273,16 +273,11 @@ class DatabaseGateway:
     def upsert_market_daily(
         self, rows: List[Dict[str, Any]], chunk_size: int = 500
     ) -> int:
-        """批量幂等更新日线行情与估值 (支持价格与估值非空字段增量合并，互不覆盖)"""
+        """批量幂等原子更新日线行情与估值 (原生 UPSERT 支持价格与估值非空字段互补合并，避免先删后插)"""
         if not rows:
             return 0
 
-        df_new = pd.DataFrame(rows)
-        df_new["trade_date"] = pd.to_datetime(df_new["trade_date"]).dt.strftime(
-            "%Y-%m-%d"
-        )
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         num_cols = [
             "open",
             "high",
@@ -297,108 +292,118 @@ class DatabaseGateway:
             "roe",
         ]
 
+        insert_records: List[Dict[str, Any]] = []
+        for r in rows:
+            sym_str = str(r.get("symbol", ""))
+            raw_dt = str(r.get("trade_date", ""))[:10]
+            if not sym_str or not raw_dt:
+                continue
+            rec: Dict[str, Any] = {
+                "symbol": sym_str,
+                "trade_date": raw_dt,
+                "updated_at": now_str,
+            }
+            for c in num_cols:
+                val = r.get(c)
+                rec[c] = None if val is None or pd.isna(val) else float(val)
+            extra = r.get("extra_json")
+            if isinstance(extra, dict):
+                rec["extra_json"] = json.dumps(extra, ensure_ascii=False)
+            elif isinstance(extra, str) and extra.strip():
+                rec["extra_json"] = extra
+            else:
+                rec["extra_json"] = None
+            insert_records.append(rec)
+
+        if not insert_records:
+            return 0
+
+        dialect = self.engine.dialect.name
+        if dialect == "mysql":
+            upsert_sql = """
+            INSERT INTO market_daily
+            (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
+            VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
+            ON DUPLICATE KEY UPDATE
+                open = COALESCE(VALUES(open), open),
+                high = COALESCE(VALUES(high), high),
+                low = COALESCE(VALUES(low), low),
+                close = COALESCE(VALUES(close), close),
+                volume = COALESCE(VALUES(volume), volume),
+                amount = COALESCE(VALUES(amount), amount),
+                change_pct = COALESCE(VALUES(change_pct), change_pct),
+                pe = COALESCE(VALUES(pe), pe),
+                pb = COALESCE(VALUES(pb), pb),
+                dividend_yield = COALESCE(VALUES(dividend_yield), dividend_yield),
+                roe = COALESCE(VALUES(roe), roe),
+                extra_json = COALESCE(VALUES(extra_json), extra_json),
+                updated_at = VALUES(updated_at)
+            """
+        else:
+            upsert_sql = """
+            INSERT INTO market_daily
+            (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
+            VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
+            ON CONFLICT (symbol, trade_date) DO UPDATE SET
+                open = COALESCE(EXCLUDED.open, market_daily.open),
+                high = COALESCE(EXCLUDED.high, market_daily.high),
+                low = COALESCE(EXCLUDED.low, market_daily.low),
+                close = COALESCE(EXCLUDED.close, market_daily.close),
+                volume = COALESCE(EXCLUDED.volume, market_daily.volume),
+                amount = COALESCE(EXCLUDED.amount, market_daily.amount),
+                change_pct = COALESCE(EXCLUDED.change_pct, market_daily.change_pct),
+                pe = COALESCE(EXCLUDED.pe, market_daily.pe),
+                pb = COALESCE(EXCLUDED.pb, market_daily.pb),
+                dividend_yield = COALESCE(EXCLUDED.dividend_yield, market_daily.dividend_yield),
+                roe = COALESCE(EXCLUDED.roe, market_daily.roe),
+                extra_json = COALESCE(EXCLUDED.extra_json, market_daily.extra_json),
+                updated_at = EXCLUDED.updated_at
+            """
+
         with self.engine.begin() as conn:
-            for symbol, group in df_new.groupby("symbol"):
-                sym_str = str(symbol)
-                min_dt = str(group["trade_date"].min())
-                max_dt = str(group["trade_date"].max())
+            for i in range(0, len(insert_records), 1000):
+                batch = insert_records[i : i + 1000]
+                conn.execute(text(upsert_sql), batch)
 
-                existing_df = pd.read_sql(
-                    text(
-                        """
-                        SELECT * FROM market_daily
-                        WHERE symbol = :symbol AND trade_date >= :min_dt AND trade_date <= :max_dt
-                        """
-                    ),
-                    conn,
-                    params={"symbol": sym_str, "min_dt": min_dt, "max_dt": max_dt},
-                )
+            # 顺带高效更新 asset_meta 表中的最新行情与估值快照
+            latest_meta_updates: Dict[str, Dict[str, Any]] = {}
+            for r in insert_records:
+                sym = r["symbol"]
+                dt = r["trade_date"]
+                curr = latest_meta_updates.get(sym)
+                if curr is None or dt >= curr["trade_date"]:
+                    if curr is None or dt > curr["trade_date"]:
+                        curr = {"trade_date": dt}
+                        latest_meta_updates[sym] = curr
+                    if r.get("close") is not None:
+                        curr["price"] = r["close"]
+                    if r.get("pe") is not None:
+                        curr["pe"] = r["pe"]
+                    if r.get("pb") is not None:
+                        curr["pb"] = r["pb"]
 
-                merged = self._merge_market_frames(existing_df, group)
+            for sym, meta_info in latest_meta_updates.items():
                 conn.execute(
                     text(
                         """
-                        DELETE FROM market_daily
-                        WHERE symbol = :symbol AND trade_date >= :min_dt AND trade_date <= :max_dt
+                        UPDATE asset_meta
+                        SET latest_price = COALESCE(:price, latest_price),
+                            latest_date = :dt,
+                            latest_pe = COALESCE(:pe, latest_pe),
+                            latest_pb = COALESCE(:pb, latest_pb),
+                            updated_at = :updated_at
+                        WHERE symbol = :symbol
                         """
                     ),
-                    {"symbol": sym_str, "min_dt": min_dt, "max_dt": max_dt},
-                )
-
-                insert_records: List[Dict[str, Any]] = []
-                for _, row in merged.iterrows():
-                    rec: Dict[str, Any] = {
-                        "symbol": sym_str,
-                        "trade_date": str(row["trade_date"])[:10],
+                    {
+                        "symbol": sym,
+                        "price": meta_info.get("price"),
+                        "dt": meta_info["trade_date"],
+                        "pe": meta_info.get("pe"),
+                        "pb": meta_info.get("pb"),
                         "updated_at": now_str,
-                    }
-                    for c in num_cols:
-                        val = row.get(c)
-                        rec[c] = (
-                            None
-                            if val is None or pd.isna(val)
-                            else float(val)
-                        )
-                    extra = row.get("extra_json")
-                    if isinstance(extra, dict):
-                        rec["extra_json"] = json.dumps(extra, ensure_ascii=False)
-                    elif isinstance(extra, str) and extra.strip():
-                        rec["extra_json"] = extra
-                    else:
-                        rec["extra_json"] = None
-                    insert_records.append(rec)
-
-                if insert_records:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO market_daily
-                            (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
-                            VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
-                            """
-                        ),
-                        insert_records,
-                    )
-
-                # 顺带更新 asset_meta 表中的最新行情与估值快照
-                latest_close_rows = merged.dropna(subset=["close"])
-                if not latest_close_rows.empty:
-                    last_r = latest_close_rows.iloc[-1]
-                    last_pe_rows = (
-                        merged.dropna(subset=["pe"])
-                        if "pe" in merged.columns
-                        else pd.DataFrame()
-                    )
-                    last_pb_rows = (
-                        merged.dropna(subset=["pb"])
-                        if "pb" in merged.columns
-                        else pd.DataFrame()
-                    )
-                    conn.execute(
-                        text(
-                            """
-                            UPDATE asset_meta
-                            SET latest_price = :price,
-                                latest_date = :dt,
-                                latest_pe = COALESCE(:pe, latest_pe),
-                                latest_pb = COALESCE(:pb, latest_pb),
-                                updated_at = :updated_at
-                            WHERE symbol = :symbol
-                            """
-                        ),
-                        {
-                            "symbol": sym_str,
-                            "price": float(last_r["close"]),
-                            "dt": str(last_r["trade_date"])[:10],
-                            "pe": float(last_pe_rows.iloc[-1]["pe"])
-                            if not last_pe_rows.empty
-                            else None,
-                            "pb": float(last_pb_rows.iloc[-1]["pb"])
-                            if not last_pb_rows.empty
-                            else None,
-                            "updated_at": now_str,
-                        },
-                    )
+                    },
+                )
 
         if self._client is not None:
             try:
@@ -508,6 +513,54 @@ class DatabaseGateway:
 
         return df.sort_values("trade_date").reset_index(drop=True)
 
+    def fetch_market_daily_multi(
+        self,
+        symbols: Iterable[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """从本地关系库高效批量读取多个标的的日线与估值序列 (单次 SQL 批量加载)"""
+        sym_list = [str(s) for s in symbols if s]
+        if not sym_list:
+            return pd.DataFrame()
+
+        placeholders = []
+        params: Dict[str, Any] = {}
+        for idx, s in enumerate(sym_list):
+            k = f"s_{idx}"
+            placeholders.append(f":{k}")
+            params[k] = s
+
+        clauses = [f"symbol IN ({', '.join(placeholders)})"]
+        if start_date:
+            clauses.append("trade_date >= :start_date")
+            params["start_date"] = str(start_date)[:10]
+        if end_date:
+            clauses.append("trade_date <= :end_date")
+            params["end_date"] = str(end_date)[:10]
+
+        sql = f"SELECT * FROM market_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
+        with self.engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params)
+
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "symbol", "trade_date", "open", "high", "low", "close",
+                    "volume", "amount", "change_pct", "pe", "pb", "dividend_yield", "roe",
+                ]
+            )
+
+        df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.strftime("%Y-%m-%d")
+        for col in [
+            "open", "high", "low", "close", "volume", "amount",
+            "change_pct", "pe", "pb", "dividend_yield", "roe",
+        ]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        return df.sort_values("trade_date").reset_index(drop=True)
+
     def _fetch_remote_market(
         self,
         symbol: str,
@@ -558,57 +611,50 @@ class DatabaseGateway:
         if not rows:
             return 0
 
-        df_new = pd.DataFrame(rows)
-        df_new["trade_date"] = pd.to_datetime(df_new["trade_date"]).dt.strftime(
-            "%Y-%m-%d"
-        )
-        df_new = df_new.drop_duplicates(
-            subset=["symbol", "trade_date", "factor_id"], keep="last"
-        )
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        records: List[Dict[str, Any]] = []
+        for r in rows:
+            sym_str = str(r.get("symbol", ""))
+            raw_dt = str(r.get("trade_date", ""))[:10]
+            fid_str = str(r.get("factor_id", ""))
+            val = r.get("value")
+            if not sym_str or not raw_dt or not fid_str or val is None or pd.isna(val):
+                continue
+            records.append(
+                {
+                    "symbol": sym_str,
+                    "trade_date": raw_dt,
+                    "factor_id": fid_str,
+                    "value": float(val),
+                    "updated_at": now_str,
+                }
+            )
+
+        if not records:
+            return 0
+
+        dialect = self.engine.dialect.name
+        if dialect == "mysql":
+            upsert_fac_sql = """
+            INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
+            VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
+            ON DUPLICATE KEY UPDATE
+                value = VALUES(value),
+                updated_at = VALUES(updated_at)
+            """
+        else:
+            upsert_fac_sql = """
+            INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
+            VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
+            ON CONFLICT (symbol, trade_date, factor_id) DO UPDATE SET
+                value = EXCLUDED.value,
+                updated_at = EXCLUDED.updated_at
+            """
 
         with self.engine.begin() as conn:
-            for (symbol, factor_id), group in df_new.groupby(["symbol", "factor_id"]):
-                sym_str = str(symbol)
-                fid_str = str(factor_id)
-                min_dt = str(group["trade_date"].min())
-                max_dt = str(group["trade_date"].max())
-                conn.execute(
-                    text(
-                        """
-                        DELETE FROM factor_daily
-                        WHERE symbol = :symbol AND factor_id = :factor_id
-                          AND trade_date >= :min_dt AND trade_date <= :max_dt
-                        """
-                    ),
-                    {
-                        "symbol": sym_str,
-                        "factor_id": fid_str,
-                        "min_dt": min_dt,
-                        "max_dt": max_dt,
-                    },
-                )
-                recs = [
-                    {
-                        "symbol": sym_str,
-                        "trade_date": str(r["trade_date"])[:10],
-                        "factor_id": fid_str,
-                        "value": float(r["value"]),
-                        "updated_at": now_str,
-                    }
-                    for _, r in group.iterrows()
-                    if pd.notna(r["value"])
-                ]
-                if recs:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
-                            VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
-                            """
-                        ),
-                        recs,
-                    )
+            for i in range(0, len(records), 1000):
+                batch = records[i : i + 1000]
+                conn.execute(text(upsert_fac_sql), batch)
 
         if self._client is not None:
             try:
@@ -621,7 +667,7 @@ class DatabaseGateway:
             except Exception as exc:
                 logger.warning("写入远端 factor_daily 失败: %s", exc)
 
-        return len(df_new)
+        return len(records)
 
     def fetch_factor_series(
         self,
