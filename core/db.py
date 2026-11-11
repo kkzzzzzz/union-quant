@@ -51,6 +51,10 @@ class DatabaseGateway:
             self.db_url = "sqlite:///:memory:"
         elif self.config.database_url:
             self.db_url = self.config.database_url
+        elif self.config.supabase_url and self.config.supabase_key:
+            logger.info("未显式配置关系型数据库 DATABASE_URL，已自动启用本地持久网关引擎 + 纯 Supabase HTTPS API 模式")
+            local_db_path = cache_dir / "quant_gateway.db"
+            self.db_url = f"sqlite:///{local_db_path}"
         else:
             raise ValueError(
                 "未检测到数据库连接配置！\n"
