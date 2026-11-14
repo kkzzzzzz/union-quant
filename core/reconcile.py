@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,6 +21,8 @@ from core.config import AppConfig, OUTPUT_DIR
 from core.db import DatabaseGateway
 from core.notifier import PushNotifier
 from core.quant_engine.pipeline import QuantPipeline
+
+logger = logging.getLogger(__name__)
 
 
 class ReconciliationService:

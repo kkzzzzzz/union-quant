@@ -811,7 +811,9 @@ class DatabaseGateway:
 
         if self._client is not None:
             try:
-                clean = self._clean_records_for_json([payload])[0]
+                clean = dict(self._clean_records_for_json([payload])[0])
+                clean.pop("markdown_report", None)
+                clean["updated_at"] = now_str
                 self._client.table("strategy_signals").upsert(
                     clean, on_conflict="strategy_id,signal_date,run_mode"
                 ).execute()
