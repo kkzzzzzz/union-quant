@@ -378,6 +378,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pipe = sub.add_parser("shadow-pipeline", help="全套自动化双跑：自动拉行情估值、算因子、算影子策略并推送 Diff 报告")
     p_pipe.add_argument("--mode", choices=["daily", "catchup"], default="daily", help="数据同步模式: daily=日常增量, catchup=晚间估值追赶")
     p_pipe.add_argument("--no-notify", action="store_true", help="禁用消息通知推送")
+    p_pipe.add_argument(
+        "--no-sync-live",
+        action="store_true",
+        help="禁用将最新影子计算结果自动同步至线上生产表",
+    )
     p_pipe.set_defaults(func=cmd_shadow_pipeline)
 
     # strategy (策略表管理、离线回测验证与一键推线上/下线)
@@ -432,15 +437,19 @@ def cmd_shadow_pipeline(args: argparse.Namespace) -> int:
     from core.reconcile import ReconciliationService
 
     svc = ReconciliationService()
+    sync_live = not getattr(args, "no_sync_live", False)
     summary = svc.run_daily_shadow_pipeline(
         sync_mode=args.mode,
         compute_factors=True,
         notify=not args.no_notify,
+        sync_live=sync_live,
     )
     print("=" * 72)
     print(summary["markdown_report"])
     print("=" * 72)
     print(f"[双跑自动化流程执行完成，Diff 报告已导出至] {summary['report_path']}")
+    if sync_live:
+        print("[生产同步] 已自动将最新影子信号同步更新至线上生产表 (run_mode=live)")
     return 0 if summary["is_all_clean"] else 0
 
 

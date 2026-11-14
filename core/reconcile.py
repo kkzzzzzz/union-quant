@@ -171,6 +171,7 @@ class ReconciliationService:
             "diff_count": total_mismatched,
             "is_all_clean": total_mismatched == 0,
             "results": strategy_diffs,
+            "shadow_results": shadow_results,
         }
 
         # 1. 完整 Markdown 报表并保存本地文件
@@ -201,6 +202,7 @@ class ReconciliationService:
         sync_mode: str = "daily",
         compute_factors: bool = True,
         notify: bool = True,
+        sync_live: bool = True,
     ) -> Dict[str, Any]:
         """
         全套自动化双跑流水线：
@@ -208,6 +210,7 @@ class ReconciliationService:
         2. 自动计算最新因子
         3. 计算新系统影子策略信号 (outputs/shadow_signals/)
         4. 自动与老线上系统比对，生成 Diff 报告并推送通知！
+        5. 同步将最新信号刷新至线上生产表 (run_mode=live)，供 Vercel 看板展示！
         """
         from core.data_hub.sync import DataSyncService
         from core.quant_engine.factors import FactorService
@@ -225,7 +228,21 @@ class ReconciliationService:
             factor_svc.compute_and_store_all(tail_n=60)
 
         # 3. 对比并推送 Diff 报告
-        return self.compare(notify=notify)
+        summary = self.compare(notify=notify)
+
+        # 4. 同步更新线上生产表 (run_mode=live)
+        if sync_live:
+            shadow_results = summary.get("shadow_results") or self.run_shadow_signals()
+            for sid, payload in shadow_results.items():
+                try:
+                    live_payload = dict(payload)
+                    live_payload["run_mode"] = "live"
+                    self.db.upsert_strategy_signal(live_payload)
+                except Exception as exc:
+                    logger.warning("同步 strategy_signals 到 live 失败 (%s): %s", sid, exc)
+            logger.info("已将今日最新影子计算信号同步更新至线上生产表 (run_mode=live)")
+
+        return summary
 
 
     @staticmethod
