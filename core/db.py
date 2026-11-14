@@ -1,14 +1,14 @@
 """
-统一关系型数据库与 Supabase 网关 (Unified Relational SQL & Supabase Gateway).
+统一云端 Supabase 数据库与外部关系型数据库网关 (Unified Cloud Supabase & Relational Database Gateway).
 
 核心特性：
-1. 本地关系型 SQL 引擎 (SQLAlchemy)：
-   - 默认使用本地关系型数据库 `sqlite:///data/union_quant.db`，也可通过 `.env` 中的 `DATABASE_URL`
-     无缝切换为本地 MySQL (`mysql+pymysql://user:pass@localhost:3306/union_quant`) 或 PostgreSQL (`postgresql://...`)。
-   - 自动初始化与 `sql/schema.sql` 完全对齐的 4 张核心表：`asset_meta`、`market_daily`、`factor_daily`、`strategy_signals`。
-2. 远端 Supabase 双写与一键迁移：
-   - 配置 `SUPABASE_URL` 与 `SUPABASE_SERVICE_ROLE_KEY` 后，支持同步双写远端。
-   - 提供 `migrate_to_supabase()` 与 `export_postgres_seed_sql()`，方便本地验证无误后一键迁移到 Supabase。
+1. 纯云端 Supabase 模式 (无需本地数据库)：
+   - 生产环境及 CI 流水线默认使用远端 Supabase 作为核心数据库，不依赖任何本地 SQLite 库文件。
+   - 所有标的元数据、行情估值、向量化因子和策略信号均直接落盘 Supabase 核心表。
+2. 可选外部关系型 SQL 引擎 (SQLAlchemy)：
+   - 若在 `.env` 中显式配置了外部 PostgreSQL (`postgresql://...`) 或 MySQL (`mysql+pymysql://...`)，
+     支持通过 SQLAlchemy 直连。
+   - 仅在单元测试环境下启用轻量纯内存数据库 (`sqlite:///:memory:`) 进行单测隔离，不写磁盘。
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseGateway:
-    """统一关系型数据库访问层 (Local SQLite/MySQL/Postgres + Supabase)"""
+    """统一数据库访问层 (Cloud Supabase + 可选外部 PostgreSQL/MySQL)"""
 
     def __init__(
         self,
@@ -42,52 +42,46 @@ class DatabaseGateway:
         self.config = config or AppConfig()
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.engine: Optional[Engine] = None
+        self._client: Any = None
+        self.db_url: Optional[str] = None
 
-        # 解析关系型数据库连接串：优先显式传入 -> 单元测试隔离目录使用内存库 -> 生产使用环境变量 DATABASE_URL
+        # 优先显式传入 -> 单元测试隔离目录使用内存库 -> 外部关系库 DATABASE_URL
         if db_url:
             self.db_url = db_url
         elif cache_dir != DATA_CACHE_DIR or os.getenv("ALLOW_SQLITE_TEST", "").lower() in ("1", "true", "yes"):
-            # 仅在运行隔离单元测试时使用内存数据库，避免测试污染外部真实库或磁盘
+            # 仅在运行隔离单元测试时使用纯内存数据库，不写磁盘
             self.db_url = "sqlite:///:memory:"
         elif self.config.database_url:
             self.db_url = self.config.database_url
-        elif self.config.supabase_url and self.config.supabase_key:
-            logger.info("未显式配置关系型数据库 DATABASE_URL，已自动启用本地持久网关引擎 + 纯 Supabase HTTPS API 模式")
-            local_db_path = cache_dir / "quant_gateway.db"
-            self.db_url = f"sqlite:///{local_db_path}"
-        else:
+        elif not (self.config.supabase_url and self.config.supabase_key):
             raise ValueError(
                 "未检测到数据库连接配置！\n"
-                "已移除默认本地 SQLite 数据库。请在根目录 .env 文件中配置 DATABASE_URL。\n"
-                "示例：\n"
-                "  PostgreSQL: DATABASE_URL=postgresql://user:password@host:5432/dbname\n"
-                "  MySQL     : DATABASE_URL=mysql+pymysql://user:password@host:3306/dbname\n"
-                "  或在 .env 中分别配置 DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT 等。"
+                "已移除本地数据库。请在 .env 文件中配置 SUPABASE_URL 与 SUPABASE_SERVICE_ROLE_KEY，\n"
+                "或配置 DATABASE_URL (如 postgresql://... / mysql://...)。"
             )
 
         # 规范化 postgres:// 为 postgresql:// (兼容 SQLAlchemy 2.0 要求)
-        if self.db_url.startswith("postgres://"):
-            self.db_url = "postgresql://" + self.db_url[len("postgres://") :]
+        if self.db_url:
+            if self.db_url.startswith("postgres://"):
+                self.db_url = "postgresql://" + self.db_url[len("postgres://") :]
 
-        engine_kwargs: Dict[str, Any] = {"future": True}
-        if not self.db_url.startswith("sqlite"):
-            engine_kwargs["pool_pre_ping"] = True
-            engine_kwargs["pool_recycle"] = 3600
+            engine_kwargs: Dict[str, Any] = {"future": True}
+            if not self.db_url.startswith("sqlite"):
+                engine_kwargs["pool_pre_ping"] = True
+                engine_kwargs["pool_recycle"] = 3600
 
-        try:
-            self.engine: Engine = create_engine(self.db_url, **engine_kwargs)
-            self._init_relational_tables()
-        except Exception as exc:
-            if self.config.supabase_url and self.config.supabase_key:
-                logger.info("数据库 TCP 直连端口受限，已平滑启用本地持久网关引擎 + 纯 Supabase HTTPS API 模式")
-                local_db_path = cache_dir / "quant_gateway.db"
-                self.db_url = f"sqlite:///{local_db_path}"
-                self.engine = create_engine(self.db_url, future=True)
+            try:
+                self.engine = create_engine(self.db_url, **engine_kwargs)
                 self._init_relational_tables()
-            else:
-                raise exc
+            except Exception as exc:
+                if self.config.supabase_url and self.config.supabase_key:
+                    logger.warning("关系型数据库连接失败 (%s)，将直接切换至纯 Supabase 云端模式", exc)
+                    self.engine = None
+                    self.db_url = None
+                else:
+                    raise exc
 
-        self._client: Any = None
         if enable_remote and self.config.supabase_url and self.config.supabase_key:
             try:
                 # 兼容修复部分环境 NO_PROXY 中包含 [::1] 导致 httpx 解析报 Invalid port 的问题
@@ -104,14 +98,19 @@ class DatabaseGateway:
                     self.config.supabase_url, self.config.supabase_key
                 )
             except Exception as exc:
-                logger.warning("初始化 Supabase 客户端失败，仅使用关系型数据库: %s", exc)
+                logger.warning("初始化 Supabase 客户端失败: %s", exc)
+
+        if self.engine is None and self._client is not None:
+            logger.info("已启用纯 Supabase 云端数据库模式 (无本地数据库文件)")
 
     @property
     def is_remote_enabled(self) -> bool:
         return self._client is not None
 
     def _init_relational_tables(self) -> None:
-        """在关系型数据库 (PostgreSQL / MySQL / SQLite) 中初始化与 schema.sql 一致的表结构"""
+        """在关系型数据库 (PostgreSQL / MySQL / SQLite内存) 中初始化与 schema.sql 一致的表结构"""
+        if self.engine is None:
+            return
         dialect = self.engine.dialect.name
         if dialect == "postgresql":
             exec_pk = "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"
@@ -232,40 +231,45 @@ class DatabaseGateway:
         if not rows:
             return 0
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self.engine.begin() as conn:
-            for r in rows:
-                sym = str(r["symbol"])
-                conn.execute(
-                    text("DELETE FROM asset_meta WHERE symbol = :symbol"),
-                    {"symbol": sym},
-                )
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO asset_meta
-                        (symbol, name, asset_type, market, currency, trade_etf, source_config, is_active, updated_at)
-                        VALUES (:symbol, :name, :asset_type, :market, :currency, :trade_etf, :source_config, :is_active, :updated_at)
-                        """
-                    ),
-                    {
-                        "symbol": sym,
-                        "name": r.get("name", sym),
-                        "asset_type": r.get("asset_type", "index"),
-                        "market": r.get("market", "CN"),
-                        "currency": r.get("currency", "CNY"),
-                        "trade_etf": r.get("trade_etf"),
-                        "source_config": json.dumps(
-                            r.get("source_config") or {}, ensure_ascii=False
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                for r in rows:
+                    sym = str(r["symbol"])
+                    conn.execute(
+                        text("DELETE FROM asset_meta WHERE symbol = :symbol"),
+                        {"symbol": sym},
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO asset_meta
+                            (symbol, name, asset_type, market, currency, trade_etf, source_config, is_active, updated_at)
+                            VALUES (:symbol, :name, :asset_type, :market, :currency, :trade_etf, :source_config, :is_active, :updated_at)
+                            """
                         ),
-                        "is_active": bool(r.get("is_active", True)),
-                        "updated_at": now_str,
-                    },
-                )
+                        {
+                            "symbol": sym,
+                            "name": r.get("name", sym),
+                            "asset_type": r.get("asset_type", "index"),
+                            "market": r.get("market", "CN"),
+                            "currency": r.get("currency", "CNY"),
+                            "trade_etf": r.get("trade_etf"),
+                            "source_config": json.dumps(
+                                r.get("source_config") or {}, ensure_ascii=False
+                            ),
+                            "is_active": bool(r.get("is_active", True)),
+                            "updated_at": now_str,
+                        },
+                    )
 
         if self._client is not None:
             try:
+                clean_rows = self._clean_records_for_json(rows)
+                for r in clean_rows:
+                    r["is_active"] = bool(r.get("is_active", True))
+                    r["updated_at"] = now_str
                 self._client.table("asset_meta").upsert(
-                    rows, on_conflict="symbol"
+                    clean_rows, on_conflict="symbol"
                 ).execute()
             except Exception as exc:
                 logger.warning("写入远端 asset_meta 失败: %s", exc)
@@ -322,92 +326,93 @@ class DatabaseGateway:
         if not insert_records:
             return 0
 
-        dialect = self.engine.dialect.name
-        if dialect == "mysql":
-            upsert_sql = """
-            INSERT INTO market_daily
-            (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
-            VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
-            ON DUPLICATE KEY UPDATE
-                open = COALESCE(VALUES(open), open),
-                high = COALESCE(VALUES(high), high),
-                low = COALESCE(VALUES(low), low),
-                close = COALESCE(VALUES(close), close),
-                volume = COALESCE(VALUES(volume), volume),
-                amount = COALESCE(VALUES(amount), amount),
-                change_pct = COALESCE(VALUES(change_pct), change_pct),
-                pe = COALESCE(VALUES(pe), pe),
-                pb = COALESCE(VALUES(pb), pb),
-                dividend_yield = COALESCE(VALUES(dividend_yield), dividend_yield),
-                roe = COALESCE(VALUES(roe), roe),
-                extra_json = COALESCE(VALUES(extra_json), extra_json),
-                updated_at = VALUES(updated_at)
-            """
-        else:
-            upsert_sql = """
-            INSERT INTO market_daily
-            (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
-            VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
-            ON CONFLICT (symbol, trade_date) DO UPDATE SET
-                open = COALESCE(EXCLUDED.open, market_daily.open),
-                high = COALESCE(EXCLUDED.high, market_daily.high),
-                low = COALESCE(EXCLUDED.low, market_daily.low),
-                close = COALESCE(EXCLUDED.close, market_daily.close),
-                volume = COALESCE(EXCLUDED.volume, market_daily.volume),
-                amount = COALESCE(EXCLUDED.amount, market_daily.amount),
-                change_pct = COALESCE(EXCLUDED.change_pct, market_daily.change_pct),
-                pe = COALESCE(EXCLUDED.pe, market_daily.pe),
-                pb = COALESCE(EXCLUDED.pb, market_daily.pb),
-                dividend_yield = COALESCE(EXCLUDED.dividend_yield, market_daily.dividend_yield),
-                roe = COALESCE(EXCLUDED.roe, market_daily.roe),
-                extra_json = COALESCE(EXCLUDED.extra_json, market_daily.extra_json),
-                updated_at = EXCLUDED.updated_at
-            """
+        if self.engine is not None:
+            dialect = self.engine.dialect.name
+            if dialect == "mysql":
+                upsert_sql = """
+                INSERT INTO market_daily
+                (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
+                VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
+                ON DUPLICATE KEY UPDATE
+                    open = COALESCE(VALUES(open), open),
+                    high = COALESCE(VALUES(high), high),
+                    low = COALESCE(VALUES(low), low),
+                    close = COALESCE(VALUES(close), close),
+                    volume = COALESCE(VALUES(volume), volume),
+                    amount = COALESCE(VALUES(amount), amount),
+                    change_pct = COALESCE(VALUES(change_pct), change_pct),
+                    pe = COALESCE(VALUES(pe), pe),
+                    pb = COALESCE(VALUES(pb), pb),
+                    dividend_yield = COALESCE(VALUES(dividend_yield), dividend_yield),
+                    roe = COALESCE(VALUES(roe), roe),
+                    extra_json = COALESCE(VALUES(extra_json), extra_json),
+                    updated_at = VALUES(updated_at)
+                """
+            else:
+                upsert_sql = """
+                INSERT INTO market_daily
+                (symbol, trade_date, open, high, low, close, volume, amount, change_pct, pe, pb, dividend_yield, roe, extra_json, updated_at)
+                VALUES (:symbol, :trade_date, :open, :high, :low, :close, :volume, :amount, :change_pct, :pe, :pb, :dividend_yield, :roe, :extra_json, :updated_at)
+                ON CONFLICT (symbol, trade_date) DO UPDATE SET
+                    open = COALESCE(EXCLUDED.open, market_daily.open),
+                    high = COALESCE(EXCLUDED.high, market_daily.high),
+                    low = COALESCE(EXCLUDED.low, market_daily.low),
+                    close = COALESCE(EXCLUDED.close, market_daily.close),
+                    volume = COALESCE(EXCLUDED.volume, market_daily.volume),
+                    amount = COALESCE(EXCLUDED.amount, market_daily.amount),
+                    change_pct = COALESCE(EXCLUDED.change_pct, market_daily.change_pct),
+                    pe = COALESCE(EXCLUDED.pe, market_daily.pe),
+                    pb = COALESCE(EXCLUDED.pb, market_daily.pb),
+                    dividend_yield = COALESCE(EXCLUDED.dividend_yield, market_daily.dividend_yield),
+                    roe = COALESCE(EXCLUDED.roe, market_daily.roe),
+                    extra_json = COALESCE(EXCLUDED.extra_json, market_daily.extra_json),
+                    updated_at = EXCLUDED.updated_at
+                """
 
-        with self.engine.begin() as conn:
-            for i in range(0, len(insert_records), 1000):
-                batch = insert_records[i : i + 1000]
-                conn.execute(text(upsert_sql), batch)
+            with self.engine.begin() as conn:
+                for i in range(0, len(insert_records), 1000):
+                    batch = insert_records[i : i + 1000]
+                    conn.execute(text(upsert_sql), batch)
 
-            # 顺带高效更新 asset_meta 表中的最新行情与估值快照
-            latest_meta_updates: Dict[str, Dict[str, Any]] = {}
-            for r in insert_records:
-                sym = r["symbol"]
-                dt = r["trade_date"]
-                curr = latest_meta_updates.get(sym)
-                if curr is None or dt >= curr["trade_date"]:
-                    if curr is None or dt > curr["trade_date"]:
-                        curr = {"trade_date": dt}
-                        latest_meta_updates[sym] = curr
-                    if r.get("close") is not None:
-                        curr["price"] = r["close"]
-                    if r.get("pe") is not None:
-                        curr["pe"] = r["pe"]
-                    if r.get("pb") is not None:
-                        curr["pb"] = r["pb"]
+                # 顺带高效更新 asset_meta 表中的最新行情与估值快照
+                latest_meta_updates: Dict[str, Dict[str, Any]] = {}
+                for r in insert_records:
+                    sym = r["symbol"]
+                    dt = r["trade_date"]
+                    curr = latest_meta_updates.get(sym)
+                    if curr is None or dt >= curr["trade_date"]:
+                        if curr is None or dt > curr["trade_date"]:
+                            curr = {"trade_date": dt}
+                            latest_meta_updates[sym] = curr
+                        if r.get("close") is not None:
+                            curr["price"] = r["close"]
+                        if r.get("pe") is not None:
+                            curr["pe"] = r["pe"]
+                        if r.get("pb") is not None:
+                            curr["pb"] = r["pb"]
 
-            for sym, meta_info in latest_meta_updates.items():
-                conn.execute(
-                    text(
-                        """
-                        UPDATE asset_meta
-                        SET latest_price = COALESCE(:price, latest_price),
-                            latest_date = :dt,
-                            latest_pe = COALESCE(:pe, latest_pe),
-                            latest_pb = COALESCE(:pb, latest_pb),
-                            updated_at = :updated_at
-                        WHERE symbol = :symbol
-                        """
-                    ),
-                    {
-                        "symbol": sym,
-                        "price": meta_info.get("price"),
-                        "dt": meta_info["trade_date"],
-                        "pe": meta_info.get("pe"),
-                        "pb": meta_info.get("pb"),
-                        "updated_at": now_str,
-                    },
-                )
+                for sym, meta_info in latest_meta_updates.items():
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE asset_meta
+                            SET latest_price = COALESCE(:price, latest_price),
+                                latest_date = :dt,
+                                latest_pe = COALESCE(:pe, latest_pe),
+                                latest_pb = COALESCE(:pb, latest_pb),
+                                updated_at = :updated_at
+                            WHERE symbol = :symbol
+                            """
+                        ),
+                        {
+                            "symbol": sym,
+                            "price": meta_info.get("price"),
+                            "dt": meta_info["trade_date"],
+                            "pe": meta_info.get("pe"),
+                            "pb": meta_info.get("pb"),
+                            "updated_at": now_str,
+                        },
+                    )
 
         if self._client is not None:
             try:
@@ -459,25 +464,28 @@ class DatabaseGateway:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """从本地关系库（或远端 Supabase）读取单标的日线与估值序列"""
-        clauses = ["symbol = :symbol"]
-        params: Dict[str, Any] = {"symbol": symbol}
-        if start_date:
-            clauses.append("trade_date >= :start_date")
-            params["start_date"] = str(start_date)[:10]
-        if end_date:
-            clauses.append("trade_date <= :end_date")
-            params["end_date"] = str(end_date)[:10]
+        """读取单标的日线与估值序列 (Supabase 或关系型数据库)"""
+        df = pd.DataFrame()
+        if self.engine is not None:
+            clauses = ["symbol = :symbol"]
+            params: Dict[str, Any] = {"symbol": symbol}
+            if start_date:
+                clauses.append("trade_date >= :start_date")
+                params["start_date"] = str(start_date)[:10]
+            if end_date:
+                clauses.append("trade_date <= :end_date")
+                params["end_date"] = str(end_date)[:10]
 
-        sql = f"SELECT * FROM market_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
+            sql = f"SELECT * FROM market_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
 
-        # 若在全新环境（如 GitHub Actions Runner）本地仅同步了最近几天的增量，自动从远端 Supabase 拉取完整历史
-        if len(df) < 100 and self._client is not None and not start_date:
+        if (df.empty or len(df) < 100) and self._client is not None and not start_date:
             remote_df = self._fetch_remote_market(symbol, start_date, end_date)
             if len(remote_df) > len(df):
                 df = remote_df
+        elif df.empty and self._client is not None:
+            df = self._fetch_remote_market(symbol, start_date, end_date)
 
         if df.empty:
             return pd.DataFrame(
@@ -523,29 +531,67 @@ class DatabaseGateway:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """从本地关系库高效批量读取多个标的的日线与估值序列 (单次 SQL 批量加载)"""
+        """高效批量读取多个标的的日线与估值序列 (Supabase 或关系型数据库)"""
         sym_list = [str(s) for s in symbols if s]
         if not sym_list:
             return pd.DataFrame()
 
-        placeholders = []
-        params: Dict[str, Any] = {}
-        for idx, s in enumerate(sym_list):
-            k = f"s_{idx}"
-            placeholders.append(f":{k}")
-            params[k] = s
+        df = pd.DataFrame()
+        if self.engine is not None:
+            placeholders = []
+            params: Dict[str, Any] = {}
+            for idx, s in enumerate(sym_list):
+                k = f"s_{idx}"
+                placeholders.append(f":{k}")
+                params[k] = s
 
-        clauses = [f"symbol IN ({', '.join(placeholders)})"]
-        if start_date:
-            clauses.append("trade_date >= :start_date")
-            params["start_date"] = str(start_date)[:10]
-        if end_date:
-            clauses.append("trade_date <= :end_date")
-            params["end_date"] = str(end_date)[:10]
+            clauses = [f"symbol IN ({', '.join(placeholders)})"]
+            if start_date:
+                clauses.append("trade_date >= :start_date")
+                params["start_date"] = str(start_date)[:10]
+            if end_date:
+                clauses.append("trade_date <= :end_date")
+                params["end_date"] = str(end_date)[:10]
 
-        sql = f"SELECT * FROM market_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
+            sql = f"SELECT * FROM market_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
+
+        if (df.empty or len(df) < len(sym_list) * 50) and self._client is not None:
+            all_rows: List[Dict[str, Any]] = []
+            page_size = 1000
+            offset = 0
+            while True:
+                q = (
+                    self._client.table("market_daily")
+                    .select("*")
+                    .in_("symbol", sym_list)
+                    .order("trade_date", desc=False)
+                    .range(offset, offset + page_size - 1)
+                )
+                if start_date:
+                    q = q.gte("trade_date", str(start_date)[:10])
+                if end_date:
+                    q = q.lte("trade_date", str(end_date)[:10])
+                resp = q.execute()
+                batch = resp.data or []
+                all_rows.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+
+            if all_rows:
+                remote_df = pd.DataFrame(all_rows)
+                if len(remote_df) > len(df):
+                    df = remote_df
+            elif df.empty:
+                dfs = []
+                for s in sym_list:
+                    f_df = self._fetch_remote_market(s, start_date, end_date)
+                    if not f_df.empty:
+                        dfs.append(f_df)
+                if dfs:
+                    df = pd.concat(dfs, ignore_index=True)
 
         if df.empty:
             return pd.DataFrame(
@@ -637,28 +683,29 @@ class DatabaseGateway:
         if not records:
             return 0
 
-        dialect = self.engine.dialect.name
-        if dialect == "mysql":
-            upsert_fac_sql = """
-            INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
-            VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
-            ON DUPLICATE KEY UPDATE
-                value = VALUES(value),
-                updated_at = VALUES(updated_at)
-            """
-        else:
-            upsert_fac_sql = """
-            INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
-            VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
-            ON CONFLICT (symbol, trade_date, factor_id) DO UPDATE SET
-                value = EXCLUDED.value,
-                updated_at = EXCLUDED.updated_at
-            """
+        if self.engine is not None:
+            dialect = self.engine.dialect.name
+            if dialect == "mysql":
+                upsert_fac_sql = """
+                INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
+                VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
+                ON DUPLICATE KEY UPDATE
+                    value = VALUES(value),
+                    updated_at = VALUES(updated_at)
+                """
+            else:
+                upsert_fac_sql = """
+                INSERT INTO factor_daily (symbol, trade_date, factor_id, value, updated_at)
+                VALUES (:symbol, :trade_date, :factor_id, :value, :updated_at)
+                ON CONFLICT (symbol, trade_date, factor_id) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = EXCLUDED.updated_at
+                """
 
-        with self.engine.begin() as conn:
-            for i in range(0, len(records), 1000):
-                batch = records[i : i + 1000]
-                conn.execute(text(upsert_fac_sql), batch)
+            with self.engine.begin() as conn:
+                for i in range(0, len(records), 1000):
+                    batch = records[i : i + 1000]
+                    conn.execute(text(upsert_fac_sql), batch)
 
         if self._client is not None:
             try:
@@ -680,25 +727,29 @@ class DatabaseGateway:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.Series:
-        clauses = ["symbol = :symbol", "factor_id = :factor_id"]
-        params: Dict[str, Any] = {"symbol": symbol, "factor_id": factor_id}
-        if start_date:
-            clauses.append("trade_date >= :start_date")
-            params["start_date"] = str(start_date)[:10]
-        if end_date:
-            clauses.append("trade_date <= :end_date")
-            params["end_date"] = str(end_date)[:10]
+        df = pd.DataFrame()
+        if self.engine is not None:
+            clauses = ["symbol = :symbol", "factor_id = :factor_id"]
+            params: Dict[str, Any] = {"symbol": symbol, "factor_id": factor_id}
+            if start_date:
+                clauses.append("trade_date >= :start_date")
+                params["start_date"] = str(start_date)[:10]
+            if end_date:
+                clauses.append("trade_date <= :end_date")
+                params["end_date"] = str(end_date)[:10]
 
-        sql = f"SELECT trade_date, value FROM factor_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
+            sql = f"SELECT trade_date, value FROM factor_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC"
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
 
-        if len(df) < 100 and self._client is not None and not start_date:
+        if (df.empty or len(df) < 100) and self._client is not None and not start_date:
             remote_df = self._fetch_remote_factor(
                 symbol, factor_id, start_date, end_date
             )
             if len(remote_df) > len(df):
                 df = remote_df
+        elif df.empty and self._client is not None:
+            df = self._fetch_remote_factor(symbol, factor_id, start_date, end_date)
 
         if df.empty or "trade_date" not in df.columns or "value" not in df.columns:
             return pd.Series(dtype=float)
@@ -756,58 +807,59 @@ class DatabaseGateway:
         run_mode = str(payload.get("run_mode", "live"))
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        with self.engine.begin() as conn:
-            conn.execute(
-                text(
-                    """
-                    DELETE FROM strategy_signals
-                    WHERE strategy_id = :strategy_id AND signal_date = :signal_date AND run_mode = :run_mode
-                    """
-                ),
-                {
-                    "strategy_id": strategy_id,
-                    "signal_date": signal_date,
-                    "run_mode": run_mode,
-                },
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO strategy_signals
-                    (strategy_id, strategy_name, strategy_version, signal_date, execution_date,
-                     run_mode, is_rebalance_day, trigger_reason, cash_weight,
-                     weights, asset_details, metrics_snapshot, config_snapshot, updated_at)
-                    VALUES (:strategy_id, :strategy_name, :strategy_version, :signal_date, :execution_date,
-                            :run_mode, :is_rebalance_day, :trigger_reason, :cash_weight,
-                            :weights, :asset_details, :metrics_snapshot, :config_snapshot, :updated_at)
-                    """
-                ),
-                {
-                    "strategy_id": strategy_id,
-                    "strategy_name": payload.get("strategy_name", strategy_id),
-                    "strategy_version": str(payload.get("strategy_version", "2.0")),
-                    "signal_date": signal_date,
-                    "execution_date": str(payload.get("execution_date", ""))[:10]
-                    or None,
-                    "run_mode": run_mode,
-                    "is_rebalance_day": bool(payload.get("is_rebalance_day", False)),
-                    "trigger_reason": payload.get("trigger_reason", ""),
-                    "cash_weight": float(payload.get("cash_weight", 0.0)),
-                    "weights": json.dumps(
-                        payload.get("weights") or {}, ensure_ascii=False
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        DELETE FROM strategy_signals
+                        WHERE strategy_id = :strategy_id AND signal_date = :signal_date AND run_mode = :run_mode
+                        """
                     ),
-                    "asset_details": json.dumps(
-                        payload.get("asset_details") or [], ensure_ascii=False
+                    {
+                        "strategy_id": strategy_id,
+                        "signal_date": signal_date,
+                        "run_mode": run_mode,
+                    },
+                )
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO strategy_signals
+                        (strategy_id, strategy_name, strategy_version, signal_date, execution_date,
+                         run_mode, is_rebalance_day, trigger_reason, cash_weight,
+                         weights, asset_details, metrics_snapshot, config_snapshot, updated_at)
+                        VALUES (:strategy_id, :strategy_name, :strategy_version, :signal_date, :execution_date,
+                                :run_mode, :is_rebalance_day, :trigger_reason, :cash_weight,
+                                :weights, :asset_details, :metrics_snapshot, :config_snapshot, :updated_at)
+                        """
                     ),
-                    "metrics_snapshot": json.dumps(
-                        payload.get("metrics_snapshot") or {}, ensure_ascii=False
-                    ),
-                    "config_snapshot": json.dumps(
-                        payload.get("config_snapshot") or {}, ensure_ascii=False
-                    ),
-                    "updated_at": now_str,
-                },
-            )
+                    {
+                        "strategy_id": strategy_id,
+                        "strategy_name": payload.get("strategy_name", strategy_id),
+                        "strategy_version": str(payload.get("strategy_version", "2.0")),
+                        "signal_date": signal_date,
+                        "execution_date": str(payload.get("execution_date", ""))[:10]
+                        or None,
+                        "run_mode": run_mode,
+                        "is_rebalance_day": bool(payload.get("is_rebalance_day", False)),
+                        "trigger_reason": payload.get("trigger_reason", ""),
+                        "cash_weight": float(payload.get("cash_weight", 0.0)),
+                        "weights": json.dumps(
+                            payload.get("weights") or {}, ensure_ascii=False
+                        ),
+                        "asset_details": json.dumps(
+                            payload.get("asset_details") or [], ensure_ascii=False
+                        ),
+                        "metrics_snapshot": json.dumps(
+                            payload.get("metrics_snapshot") or {}, ensure_ascii=False
+                        ),
+                        "config_snapshot": json.dumps(
+                            payload.get("config_snapshot") or {}, ensure_ascii=False
+                        ),
+                        "updated_at": now_str,
+                    },
+                )
 
         if self._client is not None:
             try:
@@ -829,54 +881,70 @@ class DatabaseGateway:
         if not records:
             return 0
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self.engine.begin() as conn:
-            for r in records:
-                sid = str(r["strategy_id"])
-                conn.execute(
-                    text("DELETE FROM strategy_meta WHERE strategy_id = :strategy_id"),
-                    {"strategy_id": sid},
-                )
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO strategy_meta
-                        (strategy_id, name, category, status, version, universe, default_params, execution_config, description, updated_at)
-                        VALUES (:strategy_id, :name, :category, :status, :version, :universe, :default_params, :execution_config, :description, :updated_at)
-                        """
-                    ),
-                    {
-                        "strategy_id": sid,
-                        "name": str(r.get("name", sid)),
-                        "category": str(r.get("category", r.get("type", "dynamic_allocation"))),
-                        "status": str(r.get("status", "online")),
-                        "version": str(r.get("version", "2.0")),
-                        "universe": json.dumps(r.get("universe") or [], ensure_ascii=False),
-                        "default_params": json.dumps(r.get("default_params") or r.get("strategy_params") or {}, ensure_ascii=False),
-                        "execution_config": json.dumps(r.get("execution_config") or r.get("execution") or {}, ensure_ascii=False),
-                        "description": str(r.get("description", "")),
-                        "metrics_snapshot": json.dumps(r.get("metrics_snapshot") or {}, ensure_ascii=False),
-                        "updated_at": now_str,
-                    },
-                )
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                for r in records:
+                    sid = str(r["strategy_id"])
+                    conn.execute(
+                        text("DELETE FROM strategy_meta WHERE strategy_id = :strategy_id"),
+                        {"strategy_id": sid},
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO strategy_meta
+                            (strategy_id, name, category, status, version, universe, default_params, execution_config, description, updated_at)
+                            VALUES (:strategy_id, :name, :category, :status, :version, :universe, :default_params, :execution_config, :description, :updated_at)
+                            """
+                        ),
+                        {
+                            "strategy_id": sid,
+                            "name": str(r.get("name", sid)),
+                            "category": str(r.get("category", r.get("type", "dynamic_allocation"))),
+                            "status": str(r.get("status", "online")),
+                            "version": str(r.get("version", "2.0")),
+                            "universe": json.dumps(r.get("universe") or [], ensure_ascii=False),
+                            "default_params": json.dumps(r.get("default_params") or r.get("strategy_params") or {}, ensure_ascii=False),
+                            "execution_config": json.dumps(r.get("execution_config") or r.get("execution") or {}, ensure_ascii=False),
+                            "description": str(r.get("description", "")),
+                            "metrics_snapshot": json.dumps(r.get("metrics_snapshot") or {}, ensure_ascii=False),
+                            "updated_at": now_str,
+                        },
+                    )
         if self._client is not None:
             try:
                 clean_rows = self._clean_records_for_json(records)
                 self._client.table("strategy_meta").upsert(clean_rows, on_conflict="strategy_id").execute()
             except Exception as exc:
-                logger.debug("写入远端 strategy_meta (若远端未建表则仅本地可用): %s", exc)
+                logger.debug("写入远端 strategy_meta: %s", exc)
         return len(records)
 
     def fetch_strategy_meta(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM strategy_meta"
-        params: Dict[str, Any] = {}
-        if strategy_id:
-            sql += " WHERE strategy_id = :strategy_id"
-            params["strategy_id"] = strategy_id
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
-        if df.empty:
+        rows = []
+        if self.engine is not None:
+            sql = "SELECT * FROM strategy_meta"
+            params: Dict[str, Any] = {}
+            if strategy_id:
+                sql += " WHERE strategy_id = :strategy_id"
+                params["strategy_id"] = strategy_id
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
+            if not df.empty:
+                rows = df.to_dict(orient="records")
+
+        if not rows and self._client is not None:
+            try:
+                q = self._client.table("strategy_meta").select("*")
+                if strategy_id:
+                    q = q.eq("strategy_id", strategy_id)
+                resp = q.execute()
+                rows = resp.data or []
+            except Exception as exc:
+                logger.debug("从远端拉取 strategy_meta 失败: %s", exc)
+
+        if not rows:
             return []
-        rows = df.to_dict(orient="records")
+
         for r in rows:
             for k in ["universe", "default_params", "execution_config", "metrics_snapshot"]:
                 if isinstance(r.get(k), str) and r[k]:
@@ -889,13 +957,14 @@ class DatabaseGateway:
     def update_strategy_status(self, strategy_id: str, status: str) -> bool:
         """更新策略上下线状态 (online / offline / draft)"""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self.engine.begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE strategy_meta SET status = :status, updated_at = :updated_at WHERE strategy_id = :strategy_id"
-                ),
-                {"strategy_id": strategy_id, "status": status, "updated_at": now_str},
-            )
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE strategy_meta SET status = :status, updated_at = :updated_at WHERE strategy_id = :strategy_id"
+                    ),
+                    {"strategy_id": strategy_id, "status": status, "updated_at": now_str},
+                )
         if self._client is not None:
             try:
                 self._client.table("strategy_meta").update(
@@ -909,53 +978,62 @@ class DatabaseGateway:
         """更新策略在离线回测验证后的绩效指标快照"""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         metrics_json = json.dumps(metrics, ensure_ascii=False)
-        with self.engine.begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE strategy_meta SET metrics_snapshot = :metrics, updated_at = :updated_at WHERE strategy_id = :strategy_id"
-                ),
-                {"strategy_id": strategy_id, "metrics": metrics_json, "updated_at": now_str},
-            )
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE strategy_meta SET metrics_snapshot = :metrics, updated_at = :updated_at WHERE strategy_id = :strategy_id"
+                    ),
+                    {"strategy_id": strategy_id, "metrics": metrics_json, "updated_at": now_str},
+                )
+        if self._client is not None:
+            try:
+                self._client.table("strategy_meta").update(
+                    {"metrics_snapshot": metrics, "updated_at": now_str}
+                ).eq("strategy_id", strategy_id).execute()
+            except Exception as exc:
+                logger.debug("更新远端 strategy_meta metrics 失败: %s", exc)
         return True
 
     def record_strategy_execution(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """记录单次策略运行、白盒计算过程与最终持仓动作 (方案 B)"""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self.engine.begin() as conn:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO strategy_executions
-                    (strategy_id, run_mode, signal_date, execution_date, is_rebalance_day,
-                     action, cash_weight, target_weights, runtime_params, asset_diagnostics,
-                     process_steps, trigger_reason, created_at)
-                    VALUES (:strategy_id, :run_mode, :signal_date, :execution_date, :is_rebalance_day,
-                            :action, :cash_weight, :target_weights, :runtime_params, :asset_diagnostics,
-                            :process_steps, :trigger_reason, :created_at)
-                    """
-                ),
-                {
-                    "strategy_id": str(record["strategy_id"]),
-                    "run_mode": str(record.get("run_mode", "prod")),
-                    "signal_date": str(record["signal_date"])[:10],
-                    "execution_date": str(record.get("execution_date", ""))[:10] or None,
-                    "is_rebalance_day": bool(record.get("is_rebalance_day", False)),
-                    "action": str(record.get("action", "HOLD")),
-                    "cash_weight": float(record.get("cash_weight", 0.0)),
-                    "target_weights": json.dumps(record.get("target_weights") or record.get("weights") or {}, ensure_ascii=False),
-                    "runtime_params": json.dumps(record.get("runtime_params") or {}, ensure_ascii=False),
-                    "asset_diagnostics": json.dumps(record.get("asset_diagnostics") or record.get("asset_details") or [], ensure_ascii=False),
-                    "process_steps": json.dumps(record.get("process_steps") or [], ensure_ascii=False),
-                    "trigger_reason": str(record.get("trigger_reason", "")),
-                    "created_at": now_str,
-                },
-            )
+        if self.engine is not None:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO strategy_executions
+                        (strategy_id, run_mode, signal_date, execution_date, is_rebalance_day,
+                         action, cash_weight, target_weights, runtime_params, asset_diagnostics,
+                         process_steps, trigger_reason, created_at)
+                        VALUES (:strategy_id, :run_mode, :signal_date, :execution_date, :is_rebalance_day,
+                                :action, :cash_weight, :target_weights, :runtime_params, :asset_diagnostics,
+                                :process_steps, :trigger_reason, :created_at)
+                        """
+                    ),
+                    {
+                        "strategy_id": str(record["strategy_id"]),
+                        "run_mode": str(record.get("run_mode", "prod")),
+                        "signal_date": str(record["signal_date"])[:10],
+                        "execution_date": str(record.get("execution_date", ""))[:10] or None,
+                        "is_rebalance_day": bool(record.get("is_rebalance_day", False)),
+                        "action": str(record.get("action", "HOLD")),
+                        "cash_weight": float(record.get("cash_weight", 0.0)),
+                        "target_weights": json.dumps(record.get("target_weights") or record.get("weights") or {}, ensure_ascii=False),
+                        "runtime_params": json.dumps(record.get("runtime_params") or {}, ensure_ascii=False),
+                        "asset_diagnostics": json.dumps(record.get("asset_diagnostics") or record.get("asset_details") or [], ensure_ascii=False),
+                        "process_steps": json.dumps(record.get("process_steps") or [], ensure_ascii=False),
+                        "trigger_reason": str(record.get("trigger_reason", "")),
+                        "created_at": now_str,
+                    },
+                )
         if self._client is not None:
             try:
                 clean = self._clean_records_for_json([record])[0]
                 self._client.table("strategy_executions").insert(clean).execute()
             except Exception as exc:
-                logger.debug("写入远端 strategy_executions (若远端未建表则仅本地可用): %s", exc)
+                logger.debug("写入远端 strategy_executions: %s", exc)
         return record
 
     def fetch_strategy_executions(
@@ -964,21 +1042,38 @@ class DatabaseGateway:
         run_mode: Optional[str] = None,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        clauses = []
-        params: Dict[str, Any] = {}
-        if strategy_id:
-            clauses.append("strategy_id = :strategy_id")
-            params["strategy_id"] = strategy_id
-        if run_mode:
-            clauses.append("run_mode = :run_mode")
-            params["run_mode"] = run_mode
-        where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT * FROM strategy_executions{where_clause} ORDER BY signal_date DESC, id DESC LIMIT {limit}"
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
-        if df.empty:
+        rows = []
+        if self.engine is not None:
+            clauses = []
+            params: Dict[str, Any] = {}
+            if strategy_id:
+                clauses.append("strategy_id = :strategy_id")
+                params["strategy_id"] = strategy_id
+            if run_mode:
+                clauses.append("run_mode = :run_mode")
+                params["run_mode"] = run_mode
+            where_clause = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            sql = f"SELECT * FROM strategy_executions{where_clause} ORDER BY signal_date DESC, id DESC LIMIT {limit}"
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
+            if not df.empty:
+                rows = df.to_dict(orient="records")
+
+        if not rows and self._client is not None:
+            try:
+                q = self._client.table("strategy_executions").select("*").order("signal_date", desc=True).limit(limit)
+                if strategy_id:
+                    q = q.eq("strategy_id", strategy_id)
+                if run_mode:
+                    q = q.eq("run_mode", run_mode)
+                resp = q.execute()
+                rows = resp.data or []
+            except Exception as exc:
+                logger.debug("从远端拉取 strategy_executions 失败: %s", exc)
+
+        if not rows:
             return []
-        rows = df.to_dict(orient="records")
+
         for r in rows:
             for k in ["target_weights", "runtime_params", "asset_diagnostics", "process_steps"]:
                 if isinstance(r.get(k), str):
@@ -991,14 +1086,16 @@ class DatabaseGateway:
     def fetch_all_strategy_signals(
         self, run_mode: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM strategy_signals"
-        params: Dict[str, Any] = {}
-        if run_mode:
-            sql += " WHERE run_mode = :run_mode"
-            params["run_mode"] = run_mode
-        sql += " ORDER BY signal_date DESC, strategy_id ASC"
-        with self.engine.connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
+        df = pd.DataFrame()
+        if self.engine is not None:
+            sql = "SELECT * FROM strategy_signals"
+            params: Dict[str, Any] = {}
+            if run_mode:
+                sql += " WHERE run_mode = :run_mode"
+                params["run_mode"] = run_mode
+            sql += " ORDER BY signal_date DESC, strategy_id ASC"
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(sql), conn, params=params)
 
         if df.empty and self._client is not None:
             try:
@@ -1033,75 +1130,143 @@ class DatabaseGateway:
         return results
 
     # ------------------------------------------------------------------
-    # 5. 数据库概览与一键迁移到 Supabase
+    # 5. 数据库概览与迁移
     # ------------------------------------------------------------------
     def get_database_overview(self) -> Dict[str, Any]:
-        """统计本地关系型数据库中 4 张核心表的数据量与最新状态"""
-        with self.engine.connect() as conn:
-            meta_df = pd.read_sql(
-                text("SELECT * FROM asset_meta ORDER BY asset_type, symbol"),
-                conn,
-            )
-            mkt_stats = pd.read_sql(
-                text(
-                    """
-                    SELECT symbol,
-                           COUNT(*) AS bar_count,
-                           MIN(trade_date) AS min_date,
-                           MAX(trade_date) AS max_date,
-                           SUM(CASE WHEN pe IS NOT NULL THEN 1 ELSE 0 END) AS pe_count
-                    FROM market_daily
-                    GROUP BY symbol
-                    ORDER BY symbol
-                    """
-                ),
-                conn,
-            )
-            fac_stats = pd.read_sql(
-                text(
-                    """
-                    SELECT symbol,
-                           factor_id,
-                           COUNT(*) AS row_count,
-                           MIN(trade_date) AS min_date,
-                           MAX(trade_date) AS max_date
-                    FROM factor_daily
-                    GROUP BY symbol, factor_id
-                    ORDER BY symbol, factor_id
-                    """
-                ),
-                conn,
-            )
-            sig_count = conn.execute(
-                text("SELECT COUNT(*) FROM strategy_signals")
-            ).scalar()
-            mkt_total = conn.execute(
-                text("SELECT COUNT(*) FROM market_daily")
-            ).scalar()
-            fac_total = conn.execute(
-                text("SELECT COUNT(*) FROM factor_daily")
-            ).scalar()
+        """统计数据库中 4 张核心表的数据量与最新状态"""
+        if self.engine is not None:
+            with self.engine.connect() as conn:
+                meta_df = pd.read_sql(
+                    text("SELECT * FROM asset_meta ORDER BY asset_type, symbol"),
+                    conn,
+                )
+                mkt_stats = pd.read_sql(
+                    text(
+                        """
+                        SELECT symbol,
+                               COUNT(*) AS bar_count,
+                               MIN(trade_date) AS min_date,
+                               MAX(trade_date) AS max_date,
+                               SUM(CASE WHEN pe IS NOT NULL THEN 1 ELSE 0 END) AS pe_count
+                        FROM market_daily
+                        GROUP BY symbol
+                        ORDER BY symbol
+                        """
+                    ),
+                    conn,
+                )
+                fac_stats = pd.read_sql(
+                    text(
+                        """
+                        SELECT symbol,
+                               factor_id,
+                               COUNT(*) AS row_count,
+                               MIN(trade_date) AS min_date,
+                               MAX(trade_date) AS max_date
+                        FROM factor_daily
+                        GROUP BY symbol, factor_id
+                        ORDER BY symbol, factor_id
+                        """
+                    ),
+                    conn,
+                )
+                sig_count = conn.execute(
+                    text("SELECT COUNT(*) FROM strategy_signals")
+                ).scalar()
+                mkt_total = conn.execute(
+                    text("SELECT COUNT(*) FROM market_daily")
+                ).scalar()
+                fac_total = conn.execute(
+                    text("SELECT COUNT(*) FROM factor_daily")
+                ).scalar()
+
+            return {
+                "db_url": self.db_url,
+                "supabase_configured": self.is_remote_enabled,
+                "counts": {
+                    "asset_meta": len(meta_df),
+                    "market_daily": int(mkt_total or 0),
+                    "factor_daily": int(fac_total or 0),
+                    "strategy_signals": int(sig_count or 0),
+                },
+                "asset_meta": meta_df.to_dict(orient="records"),
+                "market_summary": mkt_stats.to_dict(orient="records"),
+                "factor_summary": fac_stats.to_dict(orient="records"),
+            }
+
+        if self._client is not None:
+            try:
+                resp_meta = (
+                    self._client.table("asset_meta")
+                    .select("*")
+                    .order("symbol")
+                    .execute()
+                )
+                meta_rows = resp_meta.data or []
+                cnt_mkt = (
+                    self._client.table("market_daily")
+                    .select("trade_date", count="exact")
+                    .limit(1)
+                    .execute()
+                    .count
+                    or 0
+                )
+                cnt_fac = (
+                    self._client.table("factor_daily")
+                    .select("trade_date", count="exact")
+                    .limit(1)
+                    .execute()
+                    .count
+                    or 0
+                )
+                cnt_sig = (
+                    self._client.table("strategy_signals")
+                    .select("strategy_id", count="exact")
+                    .limit(1)
+                    .execute()
+                    .count
+                    or 0
+                )
+
+                return {
+                    "db_url": "supabase://remote",
+                    "supabase_configured": True,
+                    "counts": {
+                        "asset_meta": len(meta_rows),
+                        "market_daily": int(cnt_mkt),
+                        "factor_daily": int(cnt_fac),
+                        "strategy_signals": int(cnt_sig),
+                    },
+                    "asset_meta": meta_rows,
+                    "market_summary": [],
+                    "factor_summary": [],
+                }
+            except Exception as exc:
+                logger.warning("获取远端概览失败: %s", exc)
 
         return {
-            "db_url": self.db_url,
-            "supabase_configured": self.is_remote_enabled,
+            "db_url": None,
+            "supabase_configured": False,
             "counts": {
-                "asset_meta": len(meta_df),
-                "market_daily": int(mkt_total or 0),
-                "factor_daily": int(fac_total or 0),
-                "strategy_signals": int(sig_count or 0),
+                "asset_meta": 0,
+                "market_daily": 0,
+                "factor_daily": 0,
+                "strategy_signals": 0,
             },
-            "asset_meta": meta_df.to_dict(orient="records"),
-            "market_summary": mkt_stats.to_dict(orient="records"),
-            "factor_summary": fac_stats.to_dict(orient="records"),
+            "asset_meta": [],
+            "market_summary": [],
+            "factor_summary": [],
         }
 
     def migrate_to_supabase(self, chunk_size: int = 1500) -> Dict[str, int]:
-        """将本地关系库中的 4 张核心表一键全量推送到远端 Supabase"""
+        """将外部关系库中的 4 张核心表全量推送到远端 Supabase"""
         if self._client is None:
             raise RuntimeError(
                 "尚未配置 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY，请先在 .env 中配置后再执行迁移。"
             )
+        if self.engine is None:
+            logger.info("当前运行在纯 Supabase 远端模式，数据已直接落盘 Supabase，无需从本地关系库迁移。")
+            return self.get_database_overview().get("counts", {})
         stats = {
             "asset_meta": 0,
             "market_daily": 0,

@@ -18,7 +18,6 @@ CONFIG_DIR = ROOT_DIR / "configs"
 STRATEGIES_DIR = CONFIG_DIR / "strategies"
 DATA_DIR = ROOT_DIR / "data"
 DATA_CACHE_DIR = DATA_DIR / "cache"
-DEFAULT_SQLITE_PATH = DATA_DIR / "union_quant.db"
 OUTPUT_DIR = ROOT_DIR / "outputs"
 
 # 自动加载根目录 .env

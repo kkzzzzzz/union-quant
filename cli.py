@@ -342,14 +342,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     # bootstrap
     p_boot = sub.add_parser(
-        "bootstrap", help="初始化本地关系库、拉取实时行情估值、补齐历史并计算全部因子与策略信号"
+        "bootstrap", help="初始化数据库、拉取实时行情估值、补齐历史并计算全部因子与策略信号"
     )
     p_boot.add_argument("--no-live", action="store_true", help="跳过外部实时网络请求，仅生成锚定历史")
     p_boot.set_defaults(func=cmd_bootstrap)
 
     # migrate-supabase
     p_mig = sub.add_parser(
-        "migrate-supabase", help="将本地关系库中的四张核心表全量迁移至远端 Supabase"
+        "migrate-supabase", help="将外部关系库中的四张核心表全量迁移至远端 Supabase"
     )
     p_mig.set_defaults(func=cmd_migrate_supabase)
 

@@ -239,7 +239,7 @@ def bootstrap_verification_data(
     factor_svc = FactorService(db=gateway, config=cfg)
     pipeline = QuantPipeline(config=cfg, db=gateway)
 
-    if reset_existing:
+    if reset_existing and gateway.engine is not None:
         with gateway.engine.begin() as conn:
             conn.execute(text("DELETE FROM market_daily"))
             conn.execute(text("DELETE FROM factor_daily"))
