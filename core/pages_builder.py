@@ -36,10 +36,11 @@ def build_static_pages(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     overview = gateway.get_database_overview()
-    signals_map = {
-        s["strategy_id"]: s
-        for s in gateway.fetch_all_strategy_signals(run_mode="live")
-    }
+    signals_map: Dict[str, Dict[str, Any]] = {}
+    for s in gateway.fetch_all_strategy_signals(run_mode="live"):
+        sid = s.get("strategy_id")
+        if sid and sid not in signals_map:
+            signals_map[sid] = s
 
     strategies_bundle: Dict[str, Any] = {}
     for sid in cfg.list_strategies(only_online=True):
@@ -923,7 +924,7 @@ STATIC_PAGES_HTML = r"""<!DOCTYPE html>
 
       document.getElementById('gen-time-banner').innerHTML = `
         <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        更新: <span class="text-slate-200 font-semibold">${bundle.generated_at.split(' ')[0]}</span> | 标的:${bundle.counts.asset_meta} | 实盘:${bundle.registered_strategies.length}
+        更新: <span class="text-slate-200 font-semibold">${bundle.generated_at || '-'}</span> | 标的:${bundle.counts.asset_meta} | 实盘:${bundle.registered_strategies.length}
       `;
 
       initStrategies();
